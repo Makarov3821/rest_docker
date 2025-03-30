@@ -99,7 +99,7 @@ RUN . /tmp/bashrc \
         export RUSTUP_DIST_SERVER=https://mirrors.ustc.edu.cn/rust-static; \
         export RUSTUP_UPDATE_ROOT=https://mirrors.ustc.edu.cn/rust-static/rustup; \
     fi && \
-    sh /opt/rustup.sh -y --default-toolchain 1.83.0
+    sh /opt/rustup.sh -y --default-toolchain 1.85.1
 
 # Configure Cargo to use China mirrors
 RUN . /tmp/bashrc \
@@ -120,10 +120,10 @@ RUN rustc --version && cargo --version
 
 # Clone the workspace repository and configure environment paths
 RUN . /tmp/bashrc \
-    && git clone --depth=1 ${RootUrl}/rest_workspace.git \
+    && git clone ${RootUrl}/rest_workspace.git \
     && cd rest_workspace \
-    && git fetch --depth=1 origin 633e4151499fdfa6b301fe8741204d5dc2892494 \
-    && git checkout 633e4151499fdfa6b301fe8741204d5dc2892494 \
+    && git fetch origin 7f6f374eede9afec705cc303788f26bb13ec303c \
+    && git checkout 7f6f374eede9afec705cc303788f26bb13ec303c \
     && mkdir -p lib include
 
 ENV REST_EXT_DIR="/opt/rest_workspace/lib" 
@@ -285,31 +285,8 @@ COPY --from=dependencies $REST_EXT_INC/ $REST_EXT_INC/
 
 # Clone and build REST software components
 RUN . /tmp/bashrc \
-    && cd rest_workspace\
-    && git clone --depth=1 ${RootUrl}/rest.git rest \
-    && cd rest \
-    && git fetch --depth=1 origin 783158e5d6dc24edb0d7b6cbf7a4a8816c568403 \
-    && git checkout 783158e5d6dc24edb0d7b6cbf7a4a8816c568403 \
-    && sed -i 's/hdf5-metno = "0.9.3"/hdf5-metno = "=0.9.2"/g' Cargo.toml
-
-RUN . /tmp/bashrc \
-    && cd rest_workspace\
-    && git clone --depth=1 ${RootUrl}/rest_tensors.git rest_tensors \
-    && cd rest_tensors \
-    && git fetch --depth=1 origin 69862164277843a3c3faccb596f62840e60ad6ae \
-    && git checkout 69862164277843a3c3faccb596f62840e60ad6ae
-RUN . /tmp/bashrc \
-    && cd rest_workspace\
-    && git clone --depth=1 ${RootUrl}/rest_libcint.git rest_libcint \
-    && cd rest_libcint \
-    && git fetch --depth=1 origin 017c38b248077eb6d24413166a126e0fcfdbec9d \
-    && git checkout 017c38b248077eb6d24413166a126e0fcfdbec9d
-RUN . /tmp/bashrc \
-    && cd rest_workspace\
-    && git clone --depth=1 ${RootUrl}/rest_regression.git rest_regression \
-    && cd rest_regression \
-    && git fetch --depth=1 origin c45e5d8c3d2d8ff6c76977e45425aaf5c07012bd \
-    && git checkout c45e5d8c3d2d8ff6c76977e45425aaf5c07012bd
+    && cd rest_workspace \
+    && git submodule update --init --recursive
 
 # Build and verify REST
 RUN cd rest_workspace \
