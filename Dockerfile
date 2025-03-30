@@ -99,7 +99,7 @@ RUN . /tmp/bashrc \
         export RUSTUP_DIST_SERVER=https://mirrors.ustc.edu.cn/rust-static; \
         export RUSTUP_UPDATE_ROOT=https://mirrors.ustc.edu.cn/rust-static/rustup; \
     fi && \
-    sh /opt/rustup.sh -y
+    sh /opt/rustup.sh -y --default-toolchain 1.83.0
 
 # Configure Cargo to use China mirrors
 RUN . /tmp/bashrc \
@@ -252,7 +252,7 @@ RUN . /tmp/bashrc \
 RUN . /tmp/bashrc \
     && cd dftd4 \
     && mkdir -p build/_deps \
-    && git clone ${RootUrle}/multicharge build/_deps/multicharge-src \
+    && git clone --depth=1 ${RootUrle}/multicharge build/_deps/multicharge-src -b v0.3.0 \
     && cd build/_deps/multicharge-src \
     && find . -type f -exec sed -i "s|https://github.com/grimme-lab/mctc-lib|${url_mctc}|g" {} + \
     && find . -type f -exec sed -i "s|https://github.com/grimme-lab/mstore|${url_mstore}|g" {} + \
@@ -289,7 +289,8 @@ RUN . /tmp/bashrc \
     && git clone --depth=1 ${RootUrl}/rest.git rest \
     && cd rest \
     && git fetch --depth=1 origin 783158e5d6dc24edb0d7b6cbf7a4a8816c568403 \
-    && git checkout 783158e5d6dc24edb0d7b6cbf7a4a8816c568403
+    && git checkout 783158e5d6dc24edb0d7b6cbf7a4a8816c568403 \
+    && sed -i 's/hdf5-metno = "0.9.3"/hdf5-metno = "=0.9.2"/g' Cargo.toml
 
 RUN . /tmp/bashrc \
     && cd rest_workspace\
