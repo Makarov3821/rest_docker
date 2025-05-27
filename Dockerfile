@@ -50,8 +50,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     g++ \
     gfortran \
-    libblas-dev \
-    liblapack-dev \
     libgtest-dev \
     iputils-ping \
     openssl \
@@ -73,6 +71,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libopenmpi-dev \    
     libclang-dev \
     clang \
+    libopenblas-openmp-dev \
+    libhdf5-dev \
     && apt-get autoremove --purge -y && \
     apt-get autoclean -y && \
     rm -rf /var/cache/apt/* /var/lib/apt/lists/*
@@ -96,8 +96,8 @@ ENV PATH="/opt/.cargo/bin:$PATH"
 COPY src/rustup_20250112.sh /opt/rustup.sh
 RUN . /tmp/bashrc \
     && if [ "$IS_CHINA_ENV" = "True" ]; then \
-        export RUSTUP_DIST_SERVER=https://mirrors.ustc.edu.cn/rust-static; \
-        export RUSTUP_UPDATE_ROOT=https://mirrors.ustc.edu.cn/rust-static/rustup; \
+        export RUSTUP_DIST_SERVER=https://rsproxy.cn; \
+        export RUSTUP_UPDATE_ROOT=https://rsproxy.cn/rustup; \
     fi && \
     sh /opt/rustup.sh -y --default-toolchain 1.85.1
 
@@ -107,11 +107,17 @@ RUN . /tmp/bashrc \
     mkdir -p /opt/.cargo && \
     echo "\
 [source.crates-io] \n\
-replace-with = 'ustc' \n\
+replace-with = 'rsproxy-sparse' \n\
 [source.ustc] \n\
 registry = 'https://mirrors.ustc.edu.cn/crates.io-index' \n\
 [source.tuna] \n\
 registry = 'https://mirrors.tuna.tsinghua.edu.cn/git/crates.io-index.git' \n\
+[source.rsproxy] \n\
+registry = 'https://rsproxy.cn/crates.io-index' \n\
+[source.rsproxy-sparse] \n\
+registry = 'sparse+https://rsproxy.cn/index/' \n\
+[registries.rsproxy] \n\
+index = 'https://rsproxy.cn/crates.io-index' \n\
 " > /opt/.cargo/config.toml; \
     fi
 
@@ -122,8 +128,8 @@ RUN rustc --version && cargo --version
 RUN . /tmp/bashrc \
     && git clone ${RootUrl}/rest_workspace.git \
     && cd rest_workspace \
-    && git fetch origin 7f6f374eede9afec705cc303788f26bb13ec303c \
-    && git checkout 7f6f374eede9afec705cc303788f26bb13ec303c \
+    && git fetch origin 270f42310149371aabe6be0f42a2dd76a4327f8a \
+    && git checkout 270f42310149371aabe6be0f42a2dd76a4327f8a \
     && mkdir -p lib include
 
 ENV REST_EXT_DIR="/opt/rest_workspace/lib" 
@@ -287,6 +293,26 @@ COPY --from=dependencies $REST_EXT_INC/ $REST_EXT_INC/
 RUN . /tmp/bashrc \
     && cd rest_workspace \
     && git submodule update --init --recursive
+
+# Pull request arguments for specific branches or PRs
+ARG PR_REST
+ARG PR_REGRESSION
+
+# checkout specific PRs if provided (rest)
+RUN if [ -n "$PR_REST" ]; then \
+        echo "Checking out rest PR: $PR_REST"; \
+        cd rest_workspace/rest && \
+        git fetch https://gitee.com/restgroup/rest.git pull/$PR_REST/head:pr_$PR_REST && \
+        git checkout pr_$PR_REST; \
+    fi
+
+# checkout specific PRs if provided (rest_regression)
+RUN if [ -n "$PR_REGRESSION" ]; then \
+        echo "Checking out rest_regression PR: $PR_REGRESSION"; \
+        cd rest_workspace/rest_regression && \
+        git fetch https://gitee.com/restgroup/rest_regression.git pull/$PR_REGRESSION/head:pr_$PR_REGRESSION && \
+        git checkout pr_$PR_REGRESSION; \
+    fi
 
 # Build and verify REST
 RUN cd rest_workspace \
