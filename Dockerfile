@@ -1,1 +1,1 @@
-Dockerfile.static
+Dockerfile.abini
