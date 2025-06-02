@@ -24,10 +24,22 @@ To build the Docker image yourself, follow these steps:
 
 1. Open your terminal.
 2. Navigate to the directory containing the Dockerfile.
-3. Run the following command:
+3. Run the following command to build the Docker image:
     ```sh
     docker build -t [name]:[version] .
+    # Example:
+    docker build -t rest:dev . -f ./Dockerfile
     ```
+
+    Multiple Dockerfiles are provided for different purposes:
+    - **Dockerfile.static [default]**: Used to build REST from source code, while some dependencies are linked as static libraries from pre-built packages.
+    - **Dockerfile.abini**: Used to build REST and its dependencies entirely from source code.
+
+    Additionally, there are several useful build arguments and options you can use:
+    - `--build-arg CHINA=True`: Speeds up download speeds if you are located in China.
+    - `--no-cache-filter rest`: Avoids caching for specific parts of the build process.
+    - `--build-arg PR_REST=[number]`: Specifies a pull request branch for REST to test a specific PR.
+
 4. Verify the images after a successful build:
     ```sh
     docker images
