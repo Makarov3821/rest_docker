@@ -6,6 +6,7 @@ FROM ubuntu:22.04 AS base
 
 # Define the build argument for conditional logic
 ARG CHINA
+ARG BLAS
 
 # Define the number of jobs for parallel builds
 ARG JOBS
@@ -26,6 +27,14 @@ export IS_CHINA_ENV=False \n\
 export RootUrle=https://gitee.com/restgroup \n\
 export RootUrl=https://github.com/RESTGroup \n" \
 >> /tmp/bashrc; \
+    fi
+
+RUN if [ "$BLAS" = "intel-mkl" ]; then \
+        echo "Setting BLASToolKit=intel-mkl"; \
+        echo "export BLASToolKit=intel-mkl \n" >> /tmp/bashrc; \
+    else \
+        echo "Setting BLASToolKit=openblas"; \
+        echo "export BLASToolKit=openblas \n" >> /tmp/bashrc; \
     fi
 
 # Prevent interactive prompts during installation
@@ -69,6 +78,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     automake \
     libtool \
     python3 \
+    python3-pip \
     pkg-config \
     openmpi-bin \
     openmpi-common \
@@ -84,6 +94,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN git config --global http.postBuffer 524288000 \
     && git config --global http.lowSpeedLimit 0 \
     && git config --global http.lowSpeedTime 999999
+
 
 # Configure pip index URL for China mirrors if applicable
 RUN . /tmp/bashrc \
@@ -135,6 +146,25 @@ RUN . /tmp/bashrc \
 ENV REST_EXT_DIR="/opt/lib" 
 ENV REST_EXT_INC="/opt/include"
 ENV REST_BLAS_DIR="/opt/lib" 
+ENV MKLROOT="/opt/mkl"
+
+# downloading the intel-mkl library
+RUN . /tmp/bashrc \
+     && if [ "$BLASToolKit" = "intel-mkl" ]; then \
+     wget https://registrationcenter-download.intel.com/akdlm/IRC_NAS/bd1d0273-a931-4f7e-ab76-6a2a67d646c7/intel-oneapi-base-toolkit-2025.2.0.592.sh; \
+     sh ./intel-oneapi-base-toolkit-2025.2.0.592.sh -a --silent --cli --eula accept; \
+     rm ./intel-oneapi-base-toolkit-2025.2.0.592.sh; \
+     mv /opt/intel/oneapi/mkl/2025.2 /opt/mkl; \
+     rm -r /opt/intel; \
+     rm -r /opt/mkl/lib/*.a; \
+     fi
+
+# install the geometric module for the geometric-pyo3 optimization engine
+RUN if [ "$CHINA" = "True" ]; then \
+    pip3 install geometric -i https://pypi.tuna.tsinghua.edu.cn/simple; \
+    else \
+    pip3 install geometric; \
+    fi
 
 # =======================================================================
 # Prepare prerequisites in a separate layer
@@ -208,12 +238,13 @@ RUN . /tmp/bashrc \
 # Build REST-specific dependencies like librest2fch and DFT libraries
 # Install librest2fch for converting quantum chemistry formats
 RUN . /tmp/bashrc \
-    && git clone --depth=1 ${url_MOKIT} -b master MOKIT \
+    && git clone ${url_MOKIT} -b master MOKIT \
     && cd MOKIT/src \
-    && git fetch --depth=1 origin 225f55756784a0539f7ef34f97221927df84136d \
-    && git checkout 225f55756784a0539f7ef34f97221927df84136d \
     && make rest2fch -f Makefile.gnu_openblas \
     && cp ../mokit/lib/librest2fch.so $REST_EXT_DIR/
+#    && git clone --depth=1 ${url_MOKIT} -b master MOKIT \
+#    && git fetch --depth=1 origin 225f55756784a0539f7ef34f97221927df84136d \
+#    && git checkout 225f55756784a0539f7ef34f97221927df84136d \
 
 # Install ninja
 RUN . /tmp/bashrc \
@@ -329,17 +360,19 @@ RUN cd rest_workspace \
 
 ENV REST_FORTRAN_COMPILER="gfortran"                
 ENV REST_HOME="/opt/rest_workspace"                   
-ENV LD_LIBRARY_PATH="$REST_EXT_DIR:$LD_LIBRARY_PATH"
 ENV HDF5_DIR="/opt"
 ENV REST_HDF5_DIR="$REST_HOME"
+ENV MKLROOT="/opt/mkl"
 #ENV REST_XC_DIR="$REST_HOME"
-#ENV REST_CINT_DIR="/opt/lib"        
+ENV REST_CINT_DIR="/opt/lib"        
+ENV LD_LIBRARY_PATH="$MKLROOT/lib:$REST_EXT_DIR:$LD_LIBRARY_PATH"
 
 RUN cd rest_workspace \
     && cargo fetch  
 
-RUN cd rest_workspace \
-    && cargo build --release 
+RUN . /tmp/bashrc \
+    && cd rest_workspace \
+    && cargo build --release --features $BLASToolKit
 
 RUN cd rest_workspace \
     && test -f $REST_HOME/target/release/rest \
@@ -364,6 +397,7 @@ RUN echo "\
 export CC=gcc \n\
 export CXX=g++ \n\
 export FC=gfortran \n\
+export MKLROOT=/opt/mkl\n\
 export CARGO_HOME=/opt/.cargo \n\
 export RUSTUP_HOME=/opt/.rustup \n\
 export REST_EXT_DIR=/opt/lib \n\
@@ -374,7 +408,7 @@ export REST_HOME=/opt/rest_workspace \n\
 export HDF5_DIR=/opt \n\
 export REST_HDF5_DIR=/opt \n\
 export PATH=\$REST_HOME/target/release:/opt/.cargo/bin:\$PATH \n\
-export LD_LIBRARY_PATH=\$REST_EXT_DIR:\$LD_LIBRARY_PATH \n\
+export LD_LIBRARY_PATH=$MKLROOT/lib:\$REST_EXT_DIR:\$LD_LIBRARY_PATH \n\
 " >> $HOME/.bashrc
 #export REST_XC_DIR=/opt \n\
 #export REST_CINT_DIR=/opt/lib \n\

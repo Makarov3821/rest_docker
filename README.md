@@ -37,6 +37,7 @@ To build the Docker image yourself, follow these steps:
 
     Additionally, there are several useful build arguments and options you can use:
     - `--build-arg CHINA=True`: Speeds up download speeds if you are located in China.
+    - `--build-arg BLAS=[blas_toolkit]`: Specifies BLAS and LAPACK libraries used. Two options: either `openblas` or `intel-mkl`
     - `--no-cache-filter rest`: Avoids caching for specific parts of the build process.
     - `--build-arg PR_REST=[number]`: Specifies a pull request branch for REST to test a specific PR.
 
