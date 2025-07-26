@@ -109,8 +109,8 @@ singularity exec --bind /path/to/local:/path/in/container [name]_[version].sif b
 
 ## For Developers
 
-1. To debug code in the image:
-    - Run:
+1. To debugging in the Container:
+    - To debug code within the container environment:
         ```sh
         docker run --rm -it [name]:[version] sudo su - && /bin/bash
         ```
@@ -119,26 +119,32 @@ singularity exec --bind /path/to/local:/path/in/container [name]_[version].sif b
         FROM bsplu/rest_docker
         USER root
         ```
-2. To develop code in host (available for Linux system):
-    - Prepare an container with all necessary dependencies pre-installed for compiling REST:
+2. Host-Based Development (Linux Only):
+    - Setup Development Container:
+	    Build a container with all REST compilation dependencies:
         ```sh
-        docker build --build-arg CHINA=True --build-arg BLAS=intel-mkl --build-arg USERNAME=$USER -t rest:dev . -f ./Dockerfile.develop
+        docker build \
+		  --build-arg CHINA=True \
+		  --build-arg BLAS=intel-mkl \
+		  --build-arg USERNAME=$USER \
+		  -t rest:dev \
+		  -f ./Dockerfile.develop .
         ```
-      **NOTE**: specifies the same non-root user account name as your host OS: `--build-arg USERNAME=$USER`. 
-    - Clone the REST code from the gitee repository
+      **Important**:  Set `USERNAME=$USER` to match your host system's username for proper permissions.
+    - Prepare REST Workspace
        ```sh
         git clone https://gitee.com/restgroup/rest_workspace.git
         cd rest_workspace
         ./Config -r gitee -f $FC -e
         cd ../
        ```
-    - Load the image `rest:dev` with the `rest_workspace` folder in the host system to be mounted: 
+    - Run Container with Mounted Workspace: 
        ```sh
-        docker run --rm -v $(pwd)/rest_workspace:/home/$USER/rest_workspace -w /home/USER/rest_workspace -it rest:dev /bin/bash
+        docker run --rm -v $(pwd)/rest_workspace:/home/$USER/rest_workspace -w /home/$USER/rest_workspace -it rest:dev /bin/bash
        ```
-    - Compile the code in the image: 
+    - Compile REST: 
+	   Inside the container:
        ```sh
         cargo build --release --features intel-mkl
        ```
 
-      
