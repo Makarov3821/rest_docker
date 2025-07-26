@@ -1,0 +1,373 @@
+# Define the build argument
+ARG CHINA=False
+
+# 1. Define the base image
+FROM ubuntu:22.04 AS base
+
+# Define the build argument for conditional logic
+ARG CHINA
+ARG BLAS
+
+# Define the number of jobs for parallel builds
+ARG JOBS
+ENV JOBS=${JOBS:-8}
+
+# Use shell logic to set the ENV variable based on the build argument
+RUN if [ "$CHINA" = "True" ]; then \
+        echo "Setting IS_CHINA_ENV=True"; \
+        echo "\
+export IS_CHINA_ENV=True \n\
+export RootUrle=https://gitee.com/restgroup \n\
+export RootUrl=\${RootUrle} \n" \
+>> /tmp/bashrc; \
+    else \
+        echo "Setting IS_CHINA_ENV=False"; \
+        echo "\
+export IS_CHINA_ENV=False \n\
+export RootUrle=https://gitee.com/restgroup \n\
+export RootUrl=https://github.com/RESTGroup \n" \
+>> /tmp/bashrc; \
+    fi
+
+RUN if [ "$BLAS" = "intel-mkl" ]; then \
+        echo "Setting BLASToolKit=intel-mkl"; \
+        echo "export BLASToolKit=intel-mkl \n" >> /tmp/bashrc; \
+    else \
+        echo "Setting BLASToolKit=openblas"; \
+        echo "export BLASToolKit=openblas \n" >> /tmp/bashrc; \
+    fi
+
+# Prevent interactive prompts during installation
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Set compilers for C, C++, and Fortran
+ENV CC=gcc
+ENV CXX=g++
+ENV FC=gfortran
+
+# Set the working directory for subsequent commands
+WORKDIR /opt
+
+# Configure system package sources for faster access if inside China
+RUN . /tmp/bashrc \
+    && if [ "$IS_CHINA_ENV" = "True" ]; then \
+        sed -i -e 's|http://archive.ubuntu.com/ubuntu/|http://mirrors.tuna.tsinghua.edu.cn/ubuntu/|g' \
+               -e 's|http://security.ubuntu.com/ubuntu/|http://mirrors.tuna.tsinghua.edu.cn/ubuntu/|g' /etc/apt/sources.list; \
+    fi
+
+# Install essential system packages and tools
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    sudo \
+    ca-certificates \
+    build-essential \
+    gcc \
+    g++ \
+    gfortran \
+    libgtest-dev \
+    iputils-ping \
+    openssl \
+    libssl-dev \
+    openssh-client \
+    wget \
+    curl \
+    git \
+    unzip \
+    vim \
+    cmake \
+    autoconf \
+    automake \
+    libtool \
+    python3 \
+    python3-pip \
+    pkg-config \
+    openmpi-bin \
+    openmpi-common \
+    libopenmpi-dev \    
+    libclang-dev \
+    clang \
+    libopenblas-openmp-dev \
+    libhdf5-dev \
+    && apt-get autoremove --purge -y && \
+    apt-get autoclean -y && \
+    rm -rf /var/cache/apt/* /var/lib/apt/lists/*
+
+RUN git config --global http.postBuffer 524288000 \
+    && git config --global http.lowSpeedLimit 0 \
+    && git config --global http.lowSpeedTime 999999
+
+
+# Configure pip index URL for China mirrors if applicable
+RUN . /tmp/bashrc \
+    && if [ "$IS_CHINA_ENV" = "True" ]; then \
+        export PIP_INDEX_URL=https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple; \
+    fi
+
+# Configure Rust environment variables
+ENV CARGO_HOME=/opt/.cargo
+ENV RUSTUP_HOME=/opt/.rustup
+ENV PATH="/opt/.cargo/bin:$PATH"
+
+# Install Rust programming language
+COPY src/rustup_20250112.sh /opt/rustup.sh
+RUN . /tmp/bashrc \
+    && if [ "$IS_CHINA_ENV" = "True" ]; then \
+        export RUSTUP_DIST_SERVER=https://rsproxy.cn; \
+        export RUSTUP_UPDATE_ROOT=https://rsproxy.cn/rustup; \
+    fi && \
+    sh /opt/rustup.sh -y --default-toolchain 1.88.0
+
+# Configure Cargo to use China mirrors
+RUN . /tmp/bashrc \
+    && if [ "$IS_CHINA_ENV" = "True" ]; then \
+    mkdir -p /opt/.cargo && \
+    echo "\
+[source.crates-io] \n\
+replace-with = 'rsproxy-sparse' \n\
+[source.ustc] \n\
+registry = 'https://mirrors.ustc.edu.cn/crates.io-index' \n\
+[source.tuna] \n\
+registry = 'https://mirrors.tuna.tsinghua.edu.cn/git/crates.io-index.git' \n\
+[source.rsproxy] \n\
+registry = 'https://rsproxy.cn/crates.io-index' \n\
+[source.rsproxy-sparse] \n\
+registry = 'sparse+https://rsproxy.cn/index/' \n\
+[registries.rsproxy] \n\
+index = 'https://rsproxy.cn/crates.io-index' \n\
+" > /opt/.cargo/config.toml; \
+    fi
+
+# Verify Rust and Cargo installation
+RUN rustc --version && cargo --version
+
+RUN . /tmp/bashrc \
+    && cd /opt \
+    && mkdir -p lib include
+
+ENV REST_EXT_DIR="/opt/lib" 
+ENV REST_EXT_INC="/opt/include"
+ENV REST_BLAS_DIR="/opt/lib" 
+ENV MKLROOT="/opt/mkl"
+
+# downloading the intel-mkl library
+RUN . /tmp/bashrc \
+     && if [ "$BLASToolKit" = "intel-mkl" ]; then \
+     wget https://registrationcenter-download.intel.com/akdlm/IRC_NAS/bd1d0273-a931-4f7e-ab76-6a2a67d646c7/intel-oneapi-base-toolkit-2025.2.0.592.sh; \
+     sh ./intel-oneapi-base-toolkit-2025.2.0.592.sh -a --silent --cli --eula accept; \
+     rm ./intel-oneapi-base-toolkit-2025.2.0.592.sh; \
+     mv /opt/intel/oneapi/mkl/2025.2 /opt/mkl; \
+     rm -r /opt/intel; \
+     rm -r /opt/mkl/lib/*.a; \
+     fi
+
+# install the geometric module for the geometric-pyo3 optimization engine
+RUN if [ "$CHINA" = "True" ]; then \
+    pip3 install geometric -i https://pypi.tuna.tsinghua.edu.cn/simple; \
+    else \
+    pip3 install geometric; \
+    fi
+
+# =======================================================================
+# Prepare prerequisites in a separate layer
+FROM base AS dependencies
+
+# set repository url enviroment
+RUN echo "\
+export OMP_NUM_THREADS=4 \n\
+export url_blas=\${RootUrl}/OpenBLAS.git \n\
+export url_libcint=\${RootUrl}/libcint.git \n\
+export url_hdf5=\${RootUrl}/hdf5.git \n\
+export url_ninja=\${RootUrl}/ninja.git \n\
+export url_dftd3=\${RootUrl}/simple-dftd3.git \n\
+export url_dftd4=\${RootUrl}/dftd4.git \n\
+export url_mctc=\${RootUrl}/mctc-lib.git \n\
+export url_toml=\${RootUrl}/toml-f.git \n\
+export url_mstore=\${RootUrl}/mstore.git \n\
+export url_drive=\${RootUrl}/test-drive.git \n\
+" >> /tmp/bashrc
+
+RUN . /tmp/bashrc \
+    && if [ "$IS_CHINA_ENV" = "True" ]; then \
+        echo "\
+export url_libxc=\${RootUrle}/libxc.git \n \
+export url_MOKIT=\${RootUrle}/MOKIT.git \n" \
+        >> /tmp/bashrc; \
+    else \
+        echo "\
+export url_libxc=https://gitlab.com/libxc/libxc.git \n\
+export url_MOKIT=https://gitlab.com/jxzou/MOKIT.git \n" \
+        >> /tmp/bashrc; \
+    fi
+
+# Build and install OpenBLAS library
+RUN . /tmp/bashrc \
+    && git clone --depth=1 ${url_blas} -b v0.3.28 OpenBLAS \
+    && cd OpenBLAS \
+    && make DYNAMIC_ARCH=1 TARGET=HASWELL USE_OPENMP=1 NUM_THREADS=256 \
+    && cp libopenblas.so* $REST_EXT_DIR/
+
+# Build and install libcint library
+RUN . /tmp/bashrc \
+    && git clone --depth=1 ${url_libcint} -b v6.1.2 libcint \
+    && cd libcint \
+    && mkdir build && cd build \
+    && cmake -DWITH_RANGE_COULOMB=1 .. \
+    && make -j$JOBS \
+    && cp libcint.so* $REST_EXT_DIR/
+
+# Build and install libxc library
+RUN . /tmp/bashrc \
+    && git clone --depth=1 ${url_libxc} -b 7.0.0 libxc \
+    && cd libxc \
+    && autoreconf -i \
+    && ./configure --prefix=$(pwd) --enable-shared \
+    && make -j$JOBS && make install \
+    && cp lib/libxc.so* $REST_EXT_DIR/ \
+    && cp lib/libxc.a  $REST_EXT_DIR/
+
+
+# Build and install HDF5 library
+RUN . /tmp/bashrc \
+    && git clone --depth=1 ${url_hdf5} -b hdf5_1.14.5 hdf5_src \
+    && cd hdf5_src \
+    && ./configure --prefix=/opt/hdf5 \
+    && make -j$JOBS && make -j$JOBS install \
+    && cd /opt/hdf5 \
+    && cp lib/libhdf5.so* $REST_EXT_DIR/ \
+    && cp include/* $REST_EXT_INC/
+
+# Build REST-specific dependencies like librest2fch and DFT libraries
+# Install librest2fch for converting quantum chemistry formats
+RUN . /tmp/bashrc \
+    && git clone ${url_MOKIT} -b master MOKIT \
+    && cd MOKIT/src \
+    && make rest2fch -f Makefile.gnu_openblas \
+    && cp ../mokit/lib/librest2fch.so $REST_EXT_DIR/
+#    && git clone --depth=1 ${url_MOKIT} -b master MOKIT \
+#    && git fetch --depth=1 origin 225f55756784a0539f7ef34f97221927df84136d \
+#    && git checkout 225f55756784a0539f7ef34f97221927df84136d \
+
+# Install ninja
+RUN . /tmp/bashrc \
+    && git clone --depth=1 ${url_ninja} -b v1.12.1 ninja \
+    && cd ninja \
+    && cmake -Bbuild-cmake \
+    && cmake --build build-cmake \
+    && mv build-cmake/ninja /usr/local/bin/ 
+
+# Install dftd3 (Dispersion Correction)
+
+RUN . /tmp/bashrc \
+    && git clone --depth=1 ${url_dftd3} -b v1.2.1 \
+    && cd simple-dftd3 \
+    && mkdir -p build/_deps \
+    && git clone ${url_drive} build/_deps/test-drive-src \
+    && cd build/_deps/test-drive-src \
+    && cmake -B ../test-drive-subbuild -G Ninja \
+    && cmake --build ../test-drive-subbuild
+
+RUN . /tmp/bashrc \
+    && cd simple-dftd3 \
+    && find . -type f -exec sed -i "s|https://github.com/grimme-lab/mctc-lib|${url_mctc}|g" {} + \
+    && find . -type f -exec sed -i "s|https://github.com/grimme-lab/mstore|${url_mstore}|g" {} + \
+    && find . -type f -exec sed -i "s|https://github.com/toml-f/toml-f|${url_toml}|g" {} + \
+    && cmake -B build -G Ninja -DBUILD_SHARED_LIBS=1 \
+    && cmake --build build \
+    && cp build/libs-dftd3.so.* $REST_EXT_DIR/ \
+    && mkdir -p $REST_EXT_INC/dftd3 \
+    && find build -name *.mod | xargs -I {} cp {} $REST_EXT_INC/dftd3 \
+    && cd $REST_EXT_DIR && ln -s libs-dftd3.so.1 libs-dftd3.so
+
+# Build dftd4 for advanced dispersion correction
+RUN . /tmp/bashrc \
+    && git clone --depth=1 ${url_dftd4} -b v3.7.0 \
+    && cd dftd4 \
+    && mkdir -p build/_deps \
+    && git clone ${url_drive} build/_deps/test-drive-src \
+    && cd build/_deps/test-drive-src \
+    && cmake -B ../test-drive-subbuild -G Ninja \
+    && cmake --build ../test-drive-subbuild 
+RUN . /tmp/bashrc \
+    && cd dftd4 \
+    && mkdir -p build/_deps \
+    && git clone --depth=1 ${RootUrle}/multicharge build/_deps/multicharge-src -b v0.3.0 \
+    && cd build/_deps/multicharge-src \
+    && find . -type f -exec sed -i "s|https://github.com/grimme-lab/mctc-lib|${url_mctc}|g" {} + \
+    && find . -type f -exec sed -i "s|https://github.com/grimme-lab/mstore|${url_mstore}|g" {} + \
+    && find . -type f -exec sed -i "s|https://github.com/toml-f/toml-f|${url_toml}|g" {} + \
+    && find . -type f -exec sed -i "s|https://github.com/toml-f/toml-f|${RootUrle}/multicharge|g" {} + \
+    && cmake -B ../multicharge-subbuild -G Ninja \
+    && cmake --build ../multicharge-subbuild 
+
+RUN . /tmp/bashrc \
+    && cd dftd4 \
+    && find . -type f -exec sed -i "s|https://github.com/grimme-lab/mctc-lib|${url_mctc}|g" {} + \
+    && find . -type f -exec sed -i "s|https://github.com/grimme-lab/mstore|${url_mstore}|g" {} + \
+    && find . -type f -exec sed -i "s|https://github.com/toml-f/toml-f|${url_toml}|g" {} + \
+    && find . -type f -exec sed -i "s|https://github.com/toml-f/toml-f|${RootUrle}/multicharge|g" {} + \
+    && cmake -B build -G Ninja -DBUILD_SHARED_LIBS=1 \
+    && cmake --build build \
+    && mkdir -p $REST_EXT_INC/dftd4 \
+    && cp build/libdftd4.so.* $REST_EXT_DIR/ \
+    && cp build/_deps/multicharge-build/libmulticharge.so.* $REST_EXT_DIR/ \
+    && cp build/_deps/mctc-lib-build/libmctc-lib.so.* $REST_EXT_DIR/ \
+    && find build -name *.mod | xargs -I {} cp {} $REST_EXT_INC/dftd4 \
+    && cd $REST_EXT_DIR && ln -s libdftd4.so.3 libdftd4.so
+
+# =======================================================================
+# 3. Finalize the REST installation in a new stage
+FROM base AS rest
+
+# Copy built dependencies from the previous stage
+COPY --from=dependencies $REST_EXT_DIR/ $REST_EXT_DIR/
+COPY --from=dependencies $REST_EXT_INC/ $REST_EXT_INC/
+COPY --from=dependencies /lib/x86_64-linux-gnu/libpython3.10.so.1.0 $REST_EXT_DIR/libpython3.10.so
+
+
+ENV REST_FORTRAN_COMPILER="gfortran"                
+ENV REST_HOME="/opt/rest_workspace"                   
+ENV HDF5_DIR="/opt"
+ENV REST_HDF5_DIR="$REST_HOME"
+ENV MKLROOT="/opt/mkl"
+#ENV REST_XC_DIR="$REST_HOME"
+ENV REST_CINT_DIR="/opt/lib"        
+ENV LD_LIBRARY_PATH="$MKLROOT/lib:$REST_EXT_DIR:$LD_LIBRARY_PATH"
+
+ENV PATH="${REST_HOME}/target/release:${PATH}" 
+
+RUN chmod a+wrx -R /opt/.cargo
+RUN chmod a+wrx -R /opt/.rustup
+RUN chmod a+wrx -R /opt/lib
+
+# Define the username of the system 
+ARG USERNAME
+ENV USERNAME=${USERNAME:-admin}
+
+# add a sudo user to let mpirun work without warning
+RUN useradd -m -s /bin/bash "${USERNAME}" && echo "${USERNAME}:password" | chpasswd
+RUN usermod -aG sudo "${USERNAME}"
+RUN echo "${USERNAME} ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
+USER "${USERNAME}"
+
+# set envs for root's development, if run `sudo su -`
+RUN echo "\
+\n\
+# RUST Enviroments  \n\
+export CC=gcc \n\
+export CXX=g++ \n\
+export FC=gfortran \n\
+export MKLROOT=/opt/mkl\n\
+export CARGO_HOME=/opt/.cargo \n\
+export RUSTUP_HOME=/opt/.rustup \n\
+export REST_EXT_DIR=/opt/lib \n\
+export REST_EXT_INC=/opt/include \n\
+export REST_BLAS_DIR=/opt/lib \n\
+export REST_FORTRAN_COMPILER=gfortran \n\
+export REST_HOME=$HOME/rest_workspace \n\
+export HDF5_DIR=/opt \n\
+export REST_HDF5_DIR=/opt \n\
+export PATH=\$REST_HOME/target/release:/opt/.cargo/bin:\$PATH \n\
+export LD_LIBRARY_PATH=$MKLROOT/lib:\$REST_EXT_DIR:\$LD_LIBRARY_PATH \n\
+" >> $HOME/.bashrc
+#export REST_XC_DIR=/opt \n\
+#export REST_CINT_DIR=/opt/lib \n\
+

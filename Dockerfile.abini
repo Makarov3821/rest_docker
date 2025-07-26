@@ -390,6 +390,17 @@ RUN cd rest_workspace \
             (echo "WARNING:: Regression check failed !!!"); \
        fi
 
+# Define the username of the system 
+ARG USERNAME
+ENV USERNAME=${USERNAME:-admin}
+
+# add a sudo user to let mpirun work without warning
+RUN useradd -m -s /bin/bash "${USERNAME}" && echo "${USERNAME}:password" | chpasswd
+RUN usermod -aG sudo "${USERNAME}"
+RUN echo "${USERNAME} ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
+USER "${USERNAME}"
+
+
 # set envs for root's development, if run `sudo su -`
 RUN echo "\
 \n\
@@ -413,8 +424,8 @@ export LD_LIBRARY_PATH=$MKLROOT/lib:\$REST_EXT_DIR:\$LD_LIBRARY_PATH \n\
 #export REST_XC_DIR=/opt \n\
 #export REST_CINT_DIR=/opt/lib \n\
 
-# add a sudo user to let mpirun work without warning
-RUN useradd -m -s /bin/bash admin && echo "admin:password" | chpasswd
-RUN usermod -aG sudo admin
-RUN echo "admin ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
-USER admin
+## add a sudo user to let mpirun work without warning
+#RUN useradd -m -s /bin/bash admin && echo "admin:password" | chpasswd
+#RUN usermod -aG sudo admin
+#RUN echo "admin ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
+#USER admin

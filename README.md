@@ -34,10 +34,12 @@ To build the Docker image yourself, follow these steps:
     Multiple Dockerfiles are provided for different purposes:
     - **Dockerfile.static [default]**: Used to build REST from source code, while some dependencies are linked as static libraries from pre-built packages.
     - **Dockerfile.abini**: Used to build REST and its dependencies entirely from source code.
+    - **Dockerfile.develop**: Create an Ubuntu-based development environment with all necessary dependencies pre-installed for compiling REST from source. Ideal for contributors who need a read-to-use build environment.
 
     Additionally, there are several useful build arguments and options you can use:
     - `--build-arg CHINA=True`: Speeds up download speeds if you are located in China.
     - `--build-arg BLAS=[blas_toolkit]`: Specifies BLAS and LAPACK libraries used. Two options: either `openblas` or `intel-mkl`
+    - `--build-arg USERNAME=[string]`: Sets the default non-root user account name for the container (default:`admin`). This affects both system access and file permissions within the container.
     - `--no-cache-filter rest`: Avoids caching for specific parts of the build process.
     - `--build-arg PR_REST=[number]`: Specifies a pull request branch for REST to test a specific PR.
 
@@ -107,12 +109,36 @@ singularity exec --bind /path/to/local:/path/in/container [name]_[version].sif b
 
 ## For Developers
 
-- If you want to debug code in the image, you can run:
-    ```sh
-    docker run --rm -it [name]:[version] sudo su - && /bin/bash
-    ```
-- If you want to write a Dockerfile based on this repository, you can use:
-    ```dockerfile
-    FROM bsplu/rest_docker
-    USER root
-    ```
+1. To debug code in the image:
+    - Run:
+        ```sh
+        docker run --rm -it [name]:[version] sudo su - && /bin/bash
+        ```
+    - If you want to write a Dockerfile based on this repository, you can use:
+        ```dockerfile
+        FROM bsplu/rest_docker
+        USER root
+        ```
+2. To develop code in host (available for Linux system):
+    - Prepare an container with all necessary dependencies pre-installed for compiling REST:
+        ```sh
+        docker build --build-arg CHINA=True --build-arg BLAS=intel-mkl --build-arg USERNAME=$USER -t rest:dev . -f ./Dockerfile.develop
+        ```
+      **NOTE**: specifies the same non-root user account name as your host OS: `--build-arg USERNAME=$USER`. 
+    - Clone the REST code from the gitee repository
+       ```sh
+        git clone https://gitee.com/restgroup/rest_workspace.git
+        cd rest_workspace
+        ./Config -r gitee -f $FC -e
+        cd ../
+       ```
+    - Load the image `rest:dev` with the `rest_workspace` folder in the host system to be mounted: 
+       ```sh
+        docker run --rm -v $(pwd)/rest_workspace:/home/$USER/rest_workspace -w /home/USER/rest_workspace -it rest:dev /bin/bash
+       ```
+    - Compile the code in the image: 
+       ```sh
+        cargo build --release --features intel-mkl
+       ```
+
+      
