@@ -206,8 +206,6 @@ RUN . /tmp/bashrc \
 RUN . /tmp/bashrc \
     && git clone ${url_MOKIT} -b master MOKIT \
     && cd MOKIT/src \
-    && git fetch --depth=1 origin 225f55756784a0539f7ef34f97221927df84136d \
-    && git checkout 225f55756784a0539f7ef34f97221927df84136d \
     && make rest2fch -f Makefile.gnu_openblas \
     && cp ../mokit/lib/librest2fch.so $REST_EXT_DIR/
 
