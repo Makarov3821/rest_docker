@@ -107,6 +107,10 @@ To run the Singularity container:
 singularity exec --bind /path/to/local:/path/in/container [name]_[version].sif bash -c "rest"
 ```
 
+## Binary-like build
+
+If you want a faster way in version update and smaller in image outcome, you can also experience [separate build](./separate_build/README.md)
+
 ## For Developers
 
 1. To debugging in the Container:
