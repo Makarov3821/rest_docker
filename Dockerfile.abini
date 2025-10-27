@@ -114,7 +114,8 @@ RUN . /tmp/bashrc \
         export RUSTUP_DIST_SERVER=https://rsproxy.cn; \
         export RUSTUP_UPDATE_ROOT=https://rsproxy.cn/rustup; \
     fi && \
-    sh /opt/rustup.sh -y --default-toolchain 1.88.0
+    #sh /opt/rustup.sh -y --default-toolchain 1.82.0
+    sh /opt/rustup.sh -y --default-toolchain stable
 
 # Configure Cargo to use China mirrors
 RUN . /tmp/bashrc \
@@ -159,6 +160,7 @@ RUN . /tmp/bashrc \
      rm -r /opt/mkl/lib/*.a; \
      fi
 
+RUN echo $CHINA
 # install the geometric module for the geometric-pyo3 optimization engine
 RUN if [ "$CHINA" = "True" ]; then \
     pip3 install geometric -i https://pypi.tuna.tsinghua.edu.cn/simple; \
@@ -318,6 +320,7 @@ RUN . /tmp/bashrc \
 FROM base AS rest
 
 # Clone the workspace repository and configure environment paths
+RUN rm -rf rest_workspace
 RUN . /tmp/bashrc \
     && git clone ${RootUrl}/rest_workspace.git \
     && cd rest_workspace
@@ -333,6 +336,9 @@ COPY --from=dependencies /lib/x86_64-linux-gnu/libpython3.10.so.1.0 $REST_EXT_DI
 RUN . /tmp/bashrc \
     && cd rest_workspace \
     && git submodule update --init --recursive
+
+RUN cd rest_workspace \
+    && rm -rf rest
 
 # Pull request arguments for specific branches or PRs
 ARG PR_REST
