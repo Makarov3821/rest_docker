@@ -51,8 +51,8 @@ WORKDIR /opt
 # Configure system package sources for faster access if inside China
 RUN . /tmp/bashrc \
     && if [ "$IS_CHINA_ENV" = "True" ]; then \
-        sed -i -e 's|http://archive.ubuntu.com/ubuntu/|http://mirrors.tuna.tsinghua.edu.cn/ubuntu/|g' \
-               -e 's|http://security.ubuntu.com/ubuntu/|http://mirrors.tuna.tsinghua.edu.cn/ubuntu/|g' /etc/apt/sources.list; \
+        sed -i -e 's|http://archive.ubuntu.com/ubuntu/|http://mirrors.aliyun.com/ubuntu/|g' \
+               -e 's|http://security.ubuntu.com/ubuntu/|http://mirrors.aliyun.com/ubuntu/|g' /etc/apt/sources.list; \
     fi
 
 # Install essential system packages and tools
@@ -87,6 +87,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     clang \
     libopenblas-openmp-dev \
     libhdf5-dev \
+    pymol \
     && apt-get autoremove --purge -y && \
     apt-get autoclean -y && \
     rm -rf /var/cache/apt/* /var/lib/apt/lists/*
@@ -114,8 +115,8 @@ RUN . /tmp/bashrc \
         export RUSTUP_DIST_SERVER=https://rsproxy.cn; \
         export RUSTUP_UPDATE_ROOT=https://rsproxy.cn/rustup; \
     fi && \
-    #sh /opt/rustup.sh -y --default-toolchain 1.82.0
-    sh /opt/rustup.sh -y --default-toolchain stable
+    sh /opt/rustup.sh -y --default-toolchain 1.82.0
+    #sh /opt/rustup.sh -y --default-toolchain stable
 
 # Configure Cargo to use China mirrors
 RUN . /tmp/bashrc \
@@ -161,11 +162,16 @@ RUN . /tmp/bashrc \
      fi
 
 RUN echo $CHINA
-# install the geometric module for the geometric-pyo3 optimization engine
+# install several python modules
 RUN if [ "$CHINA" = "True" ]; then \
-    pip3 install geometric -i https://pypi.tuna.tsinghua.edu.cn/simple; \
+    #pip3 install geometric -i https://pypi.tuna.tsinghua.edu.cn/simple; \
+    #pip3 install matplotlib -i https://pypi.tuna.tsinghua.edu.cn/simple; \
+    #pip3 install pymol -i https://pypi.tuna.tsinghua.edu.cn/simple; \
+    pip install geometric -i https://mirrors.aliyun.com/pypi/simple; \
+    pip install matplotlib -i https://mirrors.aliyun.com/pypi/simple; \
     else \
     pip3 install geometric; \
+    pip3 install matplotlib; \
     fi
 
 # =======================================================================
@@ -332,13 +338,14 @@ COPY --from=dependencies $REST_EXT_DIR/ $REST_EXT_DIR/
 COPY --from=dependencies $REST_EXT_INC/ $REST_EXT_INC/
 COPY --from=dependencies /lib/x86_64-linux-gnu/libpython3.10.so.1.0 $REST_EXT_DIR/libpython3.10.so
 
+
 # Clone and build REST software components
 RUN . /tmp/bashrc \
     && cd rest_workspace \
     && git submodule update --init --recursive
 
 RUN cd rest_workspace \
-    && rm -rf rest
+    && rm -rf rest rest_tensors
 
 # Pull request arguments for specific branches or PRs
 ARG PR_REST
@@ -415,6 +422,30 @@ RUN cd rest_workspace \
             (echo "WARNING:: Regression check failed !!!"); \
        fi
 
+# ===================================================================================================
+# install STM simulation relevant packages 
+#   1) `g_post`: generate STM data using Bardeen algorithm
+#   2) `plot_stm.py`: STM image generation engine
+#   3) `pymol_orbital_launcher.py`: Orbital image from a cube file using pymol
+# ===================================================================================================
+COPY src/g_post.tar.gz $REST_HOME/target/release/g_post.tar.gz
+RUN cd  $REST_HOME/target/release\
+   && tar -zxvf g_post.tar.gz \
+   && chmod a+x g_post \
+   && rm g_post.tar.gz
+#COPY src/plot_stm.py $REST_HOME/target/release/plot_stm.py
+#COPY src/pymol_orbital_launcher.py $REST_HOME/target/release/pymol_orbital_launcher.py
+#RUN cd  $REST_HOME/target/release\
+#   && chmod a+x plot_stm.py \
+#   && chmod a+x pymol_orbital_launcher.py 
+
+RUN cd  $REST_HOME/utilities\
+   && chmod a+x *.py 
+   #&& cp *.py $REST_HOME/target/release
+
+ENV PATH="${REST_HOME}/utilities:${PATH}" 
+
+
 # Define the username of the system 
 ARG USERNAME
 ENV USERNAME=${USERNAME:-admin}
@@ -424,6 +455,7 @@ RUN useradd -m -s /bin/bash "${USERNAME}" && echo "${USERNAME}:password" | chpas
 RUN usermod -aG sudo "${USERNAME}"
 RUN echo "${USERNAME} ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
 USER "${USERNAME}"
+
 
 
 # set envs for root's development, if run `sudo su -`
@@ -443,7 +475,7 @@ export REST_FORTRAN_COMPILER=gfortran \n\
 export REST_HOME=/opt/rest_workspace \n\
 export HDF5_DIR=/opt \n\
 export REST_HDF5_DIR=/opt \n\
-export PATH=\$REST_HOME/target/release:/opt/.cargo/bin:\$PATH \n\
+export PATH=\$REST_HOME/utilities:\$REST_HOME/target/release:/opt/.cargo/bin:\$PATH \n\
 export LD_LIBRARY_PATH=$MKLROOT/lib:\$REST_EXT_DIR:\$LD_LIBRARY_PATH \n\
 " >> $HOME/.bashrc
 
