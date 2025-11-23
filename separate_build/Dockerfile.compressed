@@ -72,7 +72,7 @@ RUN if grep -q "All regression tasks passed" "$REST_HOME/target/rest_regression.
 
 
 #from a clean ubuntu image, build a compressed image with rest installed
-FROM ubuntu:jammy AS rest-final
+FROM ubuntu:22.04 AS rest-final
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     sudo \
@@ -83,14 +83,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libtool \
     python3 \
     python3-dev \
+    python3-pip \ 
     pkg-config \
     openmpi-bin \
     openmpi-common \
     libopenmpi-dev \    
+    pymol \  
     && apt-get autoremove --purge -y && \
     apt-get autoclean -y && \
     rm -rf /var/cache/apt/* /var/lib/apt/lists/*
 
+
+# install several python modules
+RUN pip3 install numpy scipy matplotlib geometric
 
 ENV REST_EXT_DIR="/opt/dependency/lib" 
 ENV REST_EXT_INC="/opt/dependency/include"
@@ -116,8 +121,8 @@ export REST_HOME=/opt/rest_workspace \n\
 export REST_CINT_DIR=\$REST_EXT_DIR \n\
 export HDF5_DIR=/opt/dependency \n\
 export REST_HDF5_DIR=/opt/dependency \n\
-export REST_XC_DIR=/opt/dependency \n\
-export PATH=\$REST_HOME/target/release:/opt/.cargo/bin:\$PATH \n\
+# export REST_XC_DIR=/opt/dependency \n\
+export PATH=\$REST_HOME/target/release:/opt:/opt/.cargo/bin:\$PATH \n\
 export LD_LIBRARY_PATH=\$REST_EXT_DIR:\$LD_LIBRARY_PATH \n\
 " >> /opt/rest_env
 
