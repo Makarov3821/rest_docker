@@ -2,7 +2,7 @@
 ARG CHINA=False
 
 # 1. Define the base image
-FROM ubuntu:jammy AS base
+FROM ubuntu:22.04 AS base
 
 # Define the build argument for conditional logic
 ARG CHINA
@@ -68,6 +68,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libtool \
     python3 \
     python3-dev \
+    python3-pip \
     pkg-config \
     openmpi-bin \
     openmpi-common \
@@ -100,7 +101,7 @@ RUN . /tmp/bashrc \
         export RUSTUP_DIST_SERVER=https://mirrors.ustc.edu.cn/rust-static; \
         export RUSTUP_UPDATE_ROOT=https://mirrors.ustc.edu.cn/rust-static/rustup; \
     fi && \
-    sh /opt/rustup.sh -y
+    sh /opt/rustup.sh -y --default-toolchain 1.82.0
 
 # Configure Cargo to use China mirrors
 RUN . /tmp/bashrc \
@@ -132,13 +133,20 @@ ENV REST_EXT_INC="/opt/dependency/include"
 ENV REST_BLAS_DIR="/opt/dependency/lib" 
 RUN mkdir -p /opt/dependency/lib /opt/dependency/include
 
+# install geometric python package for geometric-pyo3
+RUN if [ "$CHINA" = "True" ]; then \
+    pip3 install geometric -i https://mirrors.aliyun.com/pypi/simple; \
+    else \
+    pip3 install geometric; \
+    fi
+
 # =======================================================================
 # Prepare prerequisites in a separate layer
 FROM base AS dependencies
 
 # set repository url enviroment
 RUN echo "\
-export OMP_NUM_THREADS=128 \n\
+export OMP_NUM_THREADS=4 \n\
 export url_blas=\${RootUrl}/OpenBLAS.git \n\
 export url_libcint=\${RootUrl}/libcint.git \n\
 export url_hdf5=\${RootUrl}/hdf5.git \n\
@@ -168,7 +176,7 @@ export url_MOKIT=https://gitlab.com/jxzou/MOKIT.git \n" \
 RUN . /tmp/bashrc \
     && git clone --depth=1 ${url_blas} -b v0.3.28 OpenBLAS \
     && cd OpenBLAS \
-    && make DYNAMIC_ARCH=1 USE_OPENMP=1 NUM_THREADS=128 \
+    && make DYNAMIC_ARCH=1 USE_OPENMP=1 NUM_THREADS=256 \
     && cp libopenblas.so* $REST_EXT_DIR/
 
 # Build and install libcint library
@@ -252,7 +260,7 @@ RUN . /tmp/bashrc \
 RUN . /tmp/bashrc \
     && cd dftd4 \
     && mkdir -p build/_deps \
-    && git clone ${RootUrl}/multicharge build/_deps/multicharge-src \
+    && git clone --depth=1 ${RootUrl}/multicharge build/_deps/multicharge-src -b v0.3.0 \
     && cd build/_deps/multicharge-src \
     && find . -type f -exec sed -i "s|https://github.com/grimme-lab/mctc-lib|${url_mctc}|g" {} + \
     && find . -type f -exec sed -i "s|https://github.com/grimme-lab/mstore|${url_mstore}|g" {} + \
