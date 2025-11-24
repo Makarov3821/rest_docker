@@ -75,6 +75,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libopenmpi-dev \    
     libclang-dev \
     clang \
+    bc \
     && apt-get autoremove --purge -y && \
     apt-get autoclean -y && \
     rm -rf /var/cache/apt/* /var/lib/apt/lists/*
