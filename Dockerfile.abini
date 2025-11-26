@@ -425,15 +425,15 @@ RUN cd rest_workspace \
 
 # ===================================================================================================
 # install STM simulation relevant packages 
-#   1) `g_post`: generate STM data using Bardeen algorithm
+#   1) `stm.x`: generate STM data using Bardeen algorithm
 #   2) `plot_stm.py`: STM image generation engine
 #   3) `pymol_orbital_launcher.py`: Orbital image from a cube file using pymol
 # ===================================================================================================
-COPY src/g_post.tar.gz $REST_HOME/target/release/g_post.tar.gz
+COPY src/stm.x.tar.gz $REST_HOME/target/release/stm.x.tar.gz
 RUN cd  $REST_HOME/target/release\
-   && tar -zxvf g_post.tar.gz \
-   && chmod a+x g_post \
-   && rm g_post.tar.gz
+   && tar -zxvf stm.x.tar.gz \
+   && chmod a+x stm.x \
+   && rm stm.x.tar.gz
 #COPY src/plot_stm.py $REST_HOME/target/release/plot_stm.py
 #COPY src/pymol_orbital_launcher.py $REST_HOME/target/release/pymol_orbital_launcher.py
 #RUN cd  $REST_HOME/target/release\

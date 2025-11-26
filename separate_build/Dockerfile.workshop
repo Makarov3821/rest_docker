@@ -121,11 +121,16 @@ RUN ln -s /opt/basis-set-pool /share/apps/rust/rest/basis-set-pool
 
 WORKDIR /opt
 ## STM simulation
-# g_post
-COPY /metadata/g_post.tar.gz /opt/g_post.tar.gz
-RUN tar -zxvf g_post.tar.gz \
-   && chmod a+x g_post \
-   && rm g_post.tar.gz
+## g_post
+#COPY /metadata/g_post.tar.gz /opt/g_post.tar.gz
+#RUN tar -zxvf g_post.tar.gz \
+#   && chmod a+x g_post \
+#   && rm g_post.tar.gz
+# stm.x
+COPY /metadata/stm.x.tar.gz /opt/stm.x.tar.gz
+RUN tar -zxvf stm.x.tar.gz \
+   && chmod a+x stm.x \
+   && rm stm.x.tar.gz
 # scripts
 # RUN mkdir -p 
 COPY --from=rest /opt/rest_workspace/utilities /opt/rest_workspace/utilities
