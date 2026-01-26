@@ -115,6 +115,7 @@ export FC=gfortran \n\
 export REST_EXT_DIR=/opt/dependency/lib \n\
 export REST_EXT_INC=/opt/dependency/include \n\
 export REST_BLAS_DIR=/opt/dependency/lib \n\
+export REST_BASIS_DIR=/opt/basis-set-pool \n\
 export REST_HOME=/opt/rest_workspace \n\
 export REST_CINT_DIR=\$REST_EXT_DIR \n\
 export HDF5_DIR=/opt/dependency \n\
