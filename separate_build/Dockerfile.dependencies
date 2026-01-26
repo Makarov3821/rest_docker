@@ -2,7 +2,7 @@
 ARG CHINA=False
 
 # 1. Define the base image
-FROM ubuntu:22.04 AS base
+FROM ubuntu:jammy AS base
 
 # Define the build argument for conditional logic
 ARG CHINA
@@ -102,7 +102,7 @@ RUN . /tmp/bashrc \
         export RUSTUP_DIST_SERVER=https://mirrors.ustc.edu.cn/rust-static; \
         export RUSTUP_UPDATE_ROOT=https://mirrors.ustc.edu.cn/rust-static/rustup; \
     fi && \
-    sh /opt/rustup.sh -y --default-toolchain 1.82.0
+    sh /opt/rustup.sh -y
 
 # Configure Cargo to use China mirrors
 RUN . /tmp/bashrc \
@@ -147,7 +147,7 @@ FROM base AS dependencies
 
 # set repository url enviroment
 RUN echo "\
-export OMP_NUM_THREADS=4 \n\
+export OMP_NUM_THREADS=128 \n\
 export url_blas=\${RootUrl}/OpenBLAS.git \n\
 export url_libcint=\${RootUrl}/libcint.git \n\
 export url_hdf5=\${RootUrl}/hdf5.git \n\
@@ -261,7 +261,7 @@ RUN . /tmp/bashrc \
 RUN . /tmp/bashrc \
     && cd dftd4 \
     && mkdir -p build/_deps \
-    && git clone --depth=1 ${RootUrl}/multicharge build/_deps/multicharge-src -b v0.3.0 \
+    && git clone ${RootUrl}/multicharge build/_deps/multicharge-src \
     && cd build/_deps/multicharge-src \
     && find . -type f -exec sed -i "s|https://github.com/grimme-lab/mctc-lib|${url_mctc}|g" {} + \
     && find . -type f -exec sed -i "s|https://github.com/grimme-lab/mstore|${url_mstore}|g" {} + \
