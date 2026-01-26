@@ -1,7 +1,7 @@
 # Copy built dependencies from the previous stage
-FROM rest_dependencies:latest AS rest
+#FROM rest_dependencies:latest AS rest
 # Or use a pre-built image
-#FROM ghcr.io/makarov3821/rest_dependencies:250712 AS rest
+FROM ghcr.io/makarov3821/rest_dependencies:251210 AS rest
 
 WORKDIR /opt
 ENV REST_EXT_DIR="/opt/dependency/lib" 
@@ -50,7 +50,7 @@ RUN test -f /opt/rest_workspace/target/release/rest \
 
 ENV PATH="${REST_HOME}/target/release:${PATH}" 
 
-RUN $REST_HOME/target/release/rest_regression -p $REST_HOME/target/release/rest > $REST_HOME/target/rest_regression.log 2>&1
+RUN $REST_HOME/target/release/rest_regression -p $REST_HOME/target/release/rest > $REST_HOME/target/rest_regression.log 2>&1 || (cat $REST_HOME/target/rest_regression.log && cat ./work_pool/C4H4_mix_yamaguchi.log && exit 1)
 #RUN cat $REST_HOME/target/rest_regression.log
 #RUN if grep -q "All regression tasks passed" "$REST_HOME/target/rest_regression.log"; then \
 #        echo "Regression check passed"; \
