@@ -158,6 +158,8 @@ export url_mctc=\${RootUrl}/mctc-lib.git \n\
 export url_toml=\${RootUrl}/toml-f.git \n\
 export url_mstore=\${RootUrl}/mstore.git \n\
 export url_drive=\${RootUrl}/test-drive.git \n\
+export LD_LIBRARY_PATH=/opt/dependency/lib \n\
+export LIBRARY_PATH=/opt/dependency/lib \n\
 " >> /tmp/bashrc
 
 RUN . /tmp/bashrc \
@@ -178,7 +180,7 @@ RUN . /tmp/bashrc \
     && git clone --depth=1 ${url_blas} -b v0.3.28 OpenBLAS \
     && cd OpenBLAS \
     && make DYNAMIC_ARCH=1 USE_OPENMP=1 NUM_THREADS=256 \
-    && cp libopenblas.so* $REST_EXT_DIR/
+    && cp libopenblas.so $REST_EXT_DIR/
 
 # Build and install libcint library
 RUN . /tmp/bashrc \
@@ -187,7 +189,7 @@ RUN . /tmp/bashrc \
     && mkdir build && cd build \
     && cmake -DWITH_RANGE_COULOMB=1 .. \
     && make -j \
-    && cp libcint.so* $REST_EXT_DIR/
+    && cp libcint.so $REST_EXT_DIR/
 
 # Build and install libxc library
 RUN . /tmp/bashrc \
@@ -196,7 +198,7 @@ RUN . /tmp/bashrc \
     && autoreconf -i \
     && ./configure --prefix=$(pwd) --enable-shared \
     && make -j && make install \
-    && cp lib/libxc.so* $REST_EXT_DIR/ \
+    && cp lib/libxc.so $REST_EXT_DIR/ \
     && cp lib/libxc.a  $REST_EXT_DIR/
 
 
@@ -207,7 +209,7 @@ RUN . /tmp/bashrc \
     && ./configure --prefix=/opt/hdf5 \
     && make -j && make -j install \
     && cd /opt/hdf5 \
-    && cp lib/libhdf5.so* $REST_EXT_DIR/ \
+    && cp lib/libhdf5.so $REST_EXT_DIR/ \
     && cp include/* $REST_EXT_INC/
 
 # Build REST-specific dependencies like librest2fch and DFT libraries
@@ -245,9 +247,9 @@ RUN . /tmp/bashrc \
     && cmake -B build -G Ninja -DBUILD_SHARED_LIBS=1 \
     && cmake --build build -j \
     && cp build/libs-dftd3.so.* $REST_EXT_DIR/ \
+    && cp `ls -1v build/libs-dftd3.so.* | tail -n 1` $REST_EXT_DIR/libs-dftd3.so \
     && mkdir -p $REST_EXT_INC/dftd3 \
-    && find build -name *.mod | xargs -I {} cp {} $REST_EXT_INC/dftd3 \
-    && cd $REST_EXT_DIR && ln -s libs-dftd3.so.1 libs-dftd3.so
+    && find build -name *.mod | xargs -I {} cp {} $REST_EXT_INC/dftd3 
 
 # Build dftd4 for advanced dispersion correction
 RUN . /tmp/bashrc \
@@ -280,11 +282,10 @@ RUN . /tmp/bashrc \
     && cmake -B build -G Ninja -DBUILD_SHARED_LIBS=1 \
     && cmake --build build \
     && mkdir -p $REST_EXT_INC/dftd4 \
-    && cp build/libdftd4.so.* $REST_EXT_DIR/ \
-    && cp build/_deps/multicharge-build/libmulticharge.so.* $REST_EXT_DIR/ \
-    && cp build/_deps/mctc-lib-build/libmctc-lib.so.* $REST_EXT_DIR/ \
-    && find build -name *.mod | xargs -I {} cp {} $REST_EXT_INC/dftd4 \
-    && cd $REST_EXT_DIR && ln -s libdftd4.so.3 libdftd4.so
+    && cp `ls -1v build/libdftd4.so.* | tail -n 1` $REST_EXT_DIR/libdftd4.so \
+    && cp `ls -1v build/_deps/multicharge-build/libmulticharge.so.* | tail -n 1` $REST_EXT_DIR/libmulticharge.so \
+    && cp `ls -1v build/_deps/mctc-lib-build/libmctc-lib.so.* | tail -n 1` $REST_EXT_DIR/libmctc-lib.so \
+    && find build -name *.mod | xargs -I {} cp {} $REST_EXT_INC/dftd4 
     #&& find . -type f -exec sed -i "s|https://github.com/toml-f/toml-f|${RootUrle}/multicharge|g" {} + \
 
 # Remove intermediate
