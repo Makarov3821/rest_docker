@@ -1,7 +1,7 @@
 # Copy built dependencies from the previous stage
 #FROM rest_dependencies:latest AS rest
 # Or use a pre-built image
-FROM ghcr.io/makarov3821/rest_dependencies:260330 AS rest
+FROM ghcr.io/makarov3821/rest_dependencies:260524 AS rest
 
 WORKDIR /opt
 ENV REST_EXT_DIR="/opt/dependency/lib" 
@@ -94,9 +94,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 
 ENV REST_EXT_DIR="/opt/dependency/lib" 
-ENV REST_EXT_INC="/opt/dependency/include"
+#ENV REST_EXT_INC="/opt/dependency/include"
 
-RUN mkdir -p /opt/dependency/lib /opt/dependency/include
+RUN mkdir -p /opt/dependency/lib
 COPY --from=rest $REST_EXT_DIR/ $REST_EXT_DIR/
 #COPY --from=rest $REST_EXT_INC/ $REST_EXT_INC/
 COPY --from=rest /opt/rest_workspace/target/release/rest /opt/rest

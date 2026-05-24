@@ -24,7 +24,7 @@ docker build -t rest_dependencies:latest --no-cache -f Dockerfile.dependencies -
 ```
 will yield image "rest_dependencies:latest", which is the base of the following procedure. This image needs no rebuild when dependencies has no change.
 
-Also, a pre-built dependencies image could be obtained by `docker pull ghcr.io/makarov3821/rest_dependencies:260330`
+Also, a pre-built dependencies image could be obtained by `docker pull ghcr.io/makarov3821/rest_dependencies:260524`
 
 ### Building compressed REST image
 
@@ -43,7 +43,7 @@ You can also build a compressed one from pre-built dependencies. Change top line
 # Copy built dependencies from the previous stage
 #FROM rest_dependencies:latest AS rest
 # Or use this line to download a precompiled image
-FROM ghcr.io/makarov3821/rest_dependencies:260330 AS rest
+FROM ghcr.io/makarov3821/rest_dependencies:260524 AS rest
 ```
 
 ### (Optional) Make Singularity image

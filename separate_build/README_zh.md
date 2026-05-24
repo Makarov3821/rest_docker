@@ -26,7 +26,7 @@ docker build -t rest_dependencies:latest --no-cache -f Dockerfile.dependencies -
 
 将生成镜像 `rest_dependencies:latest`，它是后续步骤的基础。当依赖项没有变化时，该镜像无需重新构建。
 
-此外，你也可以通过以下命令直接拉取预构建的依赖镜像：`docker pull ghcr.io/makarov3821/rest_dependencies:260330`
+此外，你也可以通过以下命令直接拉取预构建的依赖镜像：`docker pull ghcr.io/makarov3821/rest_dependencies:260524`
 
 ### 构建压缩版 REST 镜像
 
@@ -48,7 +48,7 @@ docker build -t rest_251025:latest --no-cache -f Dockerfile.compressed --target 
 # Copy built dependencies from the previous stage
 #FROM rest_dependencies:latest AS rest
 # Or use this line to download a precompiled image
-FROM ghcr.io/makarov3821/rest_dependencies:260330 AS rest
+FROM ghcr.io/makarov3821/rest_dependencies:260524 AS rest
 ```
 
 ### （可选）制作 Singularity 镜像
