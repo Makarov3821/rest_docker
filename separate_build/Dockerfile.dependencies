@@ -217,9 +217,6 @@ RUN . /tmp/bashrc \
 RUN . /tmp/bashrc \
     && git clone ${url_MOKIT} -b master MOKIT \
     && cd MOKIT/src \
-    && ls -alF /opt/dependency/lib \
-    && ls -LH /opt/dependency/lib/libopenblas.so \
-    #&& sed -i 's#MKL_FLAGS = -L$(HOME)/software/openblas-0.3.29/lib64 -lopenblas#MKL_FLAGS = -L/opt/dependency/lib -lopenblas#g' Makefile.gnu_openblas \
     && make rest2fch -f Makefile.gnu_openblas \
     && cp -d ../mokit/lib/librest2fch.so* $REST_EXT_DIR/
 

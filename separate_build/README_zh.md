@@ -94,7 +94,7 @@ docker run --rm -v /your/ctrl.in/path:/data rest:<tag> -i H2.rjf > rest.log 2>&1
 
 ### 使用 Singularity
 
-由于 sif 镜像本身配置了默认命令，因此运行名为 `rest.sif` 的镜像将获得类似于运行二进制文件的体验：
+由于 sif 镜像本身配置了默认命令，因此在有singularity环境的机器上直接运行 `rest.sif` 镜像将获得类似于运行二进制文件的体验：
 
 ```sh
 rest.sif > rest.log 2>&1
@@ -106,7 +106,7 @@ rest.sif > rest.log 2>&1
 rest.sif -i H2.rjf > rest.log 2>&1
 ```
 
-或者在装有 Singularity 环境 vehicular 的机器上，使用 MPI 方式运行：
+或者使用 MPI 方式运行：
 
 ```sh
 mpirun -np 4 rest.sif > rest.log 2>&1
