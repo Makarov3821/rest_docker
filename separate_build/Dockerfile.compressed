@@ -1,7 +1,7 @@
 # Copy built dependencies from the previous stage
 #FROM rest_dependencies:latest AS rest
 # Or use a pre-built image
-FROM ghcr.io/makarov3821/rest_dependencies:251210 AS rest
+FROM ghcr.io/makarov3821/rest_dependencies:260330 AS rest
 
 WORKDIR /opt
 ENV REST_EXT_DIR="/opt/dependency/lib" 
