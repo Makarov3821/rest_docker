@@ -143,7 +143,5 @@ RUN echo "admin ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
 USER admin
 
 
-#CMD ["source /opt/rest_workspace/env && cd /data && /opt/rest_workspace/target/release/rest"]
-#CMD bash /opt/rest_workspace/env && \
-#    /opt/rest_workspace/target/release/rest
-CMD ["bash", "-c", "source /opt/rest_env && /opt/rest"]
+#CMD ["bash", "-c", "source /opt/rest_env && /opt/rest"]
+ENTRYPOINT ["/bin/bash", "-c", "source /opt/rest_env && /opt/rest \"$@\"", "--"]
