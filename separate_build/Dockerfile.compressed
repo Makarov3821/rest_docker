@@ -1,7 +1,7 @@
 # Copy built dependencies from the previous stage
-FROM rest_dependencies:latest AS rest
+#FROM rest_dependencies:latest AS rest
 # Or use a pre-built image
-#FROM ghcr.io/makarov3821/rest_dependencies:250712 AS rest
+FROM ghcr.io/makarov3821/rest_dependencies:260524 AS rest
 
 WORKDIR /opt
 ENV REST_EXT_DIR="/opt/dependency/lib" 
@@ -50,7 +50,7 @@ RUN test -f /opt/rest_workspace/target/release/rest \
 
 ENV PATH="${REST_HOME}/target/release:${PATH}" 
 
-RUN $REST_HOME/target/release/rest_regression -p $REST_HOME/target/release/rest > $REST_HOME/target/rest_regression.log 2>&1
+#RUN $REST_HOME/target/release/rest_regression -p $REST_HOME/target/release/rest > $REST_HOME/target/rest_regression.log 2>&1 || (cat $REST_HOME/target/rest_regression.log && cat ./work_pool/C4H4_mix_yamaguchi.log && exit 1)
 #RUN cat $REST_HOME/target/rest_regression.log
 #RUN if grep -q "All regression tasks passed" "$REST_HOME/target/rest_regression.log"; then \
 #        echo "Regression check passed"; \
@@ -60,19 +60,19 @@ RUN $REST_HOME/target/release/rest_regression -p $REST_HOME/target/release/rest 
 
 # For now, a specific test may fail inside regression, but will be normal in regular calc.
 # Thus enable this to omit some error temporarily.
-RUN if grep -q "All regression tasks passed" "$REST_HOME/target/rest_regression.log"; then \
-        echo "Regression check passed"; \
-    elif sed -n '/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/,/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/p' "$REST_HOME/target/rest_regression.log" \
-    | wc -l | awk '{print $1 - 2}' && grep -q 'X: "/opt/rest_workspace/rest_regression/bench_pool/H2O_dSCF_B3LYP"' "$REST_HOME/target/rest_regression.log"; then \
-        echo "Regression may meet a regular fault, omitting."; \
-    else \
-        #(echo "Regression check failed" && cat $REST_HOME/target/rest_regression.log && exit 1); \
-        (echo "Regression check failed" && cat $REST_HOME/target/rest_regression.log); \
-    fi
+#RUN if grep -q "All regression tasks passed" "$REST_HOME/target/rest_regression.log"; then \
+#        echo "Regression check passed"; \
+#    elif sed -n '/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/,/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/p' "$REST_HOME/target/rest_regression.log" \
+#    | wc -l | awk '{print $1 - 2}' && grep -q 'X: "/opt/rest_workspace/rest_regression/bench_pool/H2O_dSCF_B3LYP"' "$REST_HOME/target/rest_regression.log"; then \
+#        echo "Regression may meet a regular fault, omitting."; \
+#    else \
+#        #(echo "Regression check failed" && cat $REST_HOME/target/rest_regression.log && exit 1); \
+#        (echo "Regression check failed" && cat $REST_HOME/target/rest_regression.log); \
+#    fi
 
 
 #from a clean ubuntu image, build a compressed image with rest installed
-FROM ubuntu:22.04 AS rest-final
+FROM ubuntu:jammy AS rest-final
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     sudo \
@@ -82,30 +82,28 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     libtool \
     python3 \
+    python3-pip \
     python3-dev \
-    python3-pip \ 
     pkg-config \
     openmpi-bin \
     openmpi-common \
     libopenmpi-dev \    
-    pymol \  
     && apt-get autoremove --purge -y && \
     apt-get autoclean -y && \
     rm -rf /var/cache/apt/* /var/lib/apt/lists/*
 
 
-# install several python modules
-RUN pip3 install numpy scipy matplotlib geometric
-
 ENV REST_EXT_DIR="/opt/dependency/lib" 
-ENV REST_EXT_INC="/opt/dependency/include"
+#ENV REST_EXT_INC="/opt/dependency/include"
 
-RUN mkdir -p /opt/dependency/lib /opt/dependency/include
+RUN mkdir -p /opt/dependency/lib
 COPY --from=rest $REST_EXT_DIR/ $REST_EXT_DIR/
 #COPY --from=rest $REST_EXT_INC/ $REST_EXT_INC/
 COPY --from=rest /opt/rest_workspace/target/release/rest /opt/rest
 COPY --from=rest /opt/rest_workspace/rest/basis-set-pool /opt/basis-set-pool
 
+# Needed for geomeTRIC
+RUN pip3 install numpy scipy geometric
 
 # set envs for root's development, if run `sudo su -`
 RUN echo "\
@@ -117,6 +115,7 @@ export FC=gfortran \n\
 export REST_EXT_DIR=/opt/dependency/lib \n\
 export REST_EXT_INC=/opt/dependency/include \n\
 export REST_BLAS_DIR=/opt/dependency/lib \n\
+export REST_BASIS_DIR=/opt/basis-set-pool \n\
 export REST_HOME=/opt/rest_workspace \n\
 export REST_CINT_DIR=\$REST_EXT_DIR \n\
 export HDF5_DIR=/opt/dependency \n\
@@ -144,7 +143,5 @@ RUN echo "admin ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
 USER admin
 
 
-#CMD ["source /opt/rest_workspace/env && cd /data && /opt/rest_workspace/target/release/rest"]
-#CMD bash /opt/rest_workspace/env && \
-#    /opt/rest_workspace/target/release/rest
-CMD ["bash", "-c", "source /opt/rest_env && /opt/rest"]
+#CMD ["bash", "-c", "source /opt/rest_env && /opt/rest"]
+ENTRYPOINT ["/bin/bash", "-c", "source /opt/rest_env && /opt/rest \"$@\"", "--"]

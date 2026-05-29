@@ -25,7 +25,7 @@ export RootUrl=\${RootUrle} \n" \
         echo "\
 export IS_CHINA_ENV=False \n\
 export RootUrle=https://gitee.com/restgroup \n\
-export RootUrl=https://github.com/RESTGroup \n" \
+export RootUrl=\${RootUrle} \n" \
 >> /tmp/bashrc; \
     fi
 
@@ -353,18 +353,20 @@ ARG PR_REST
 ARG PR_REGRESSION
 
 # checkout specific PRs if provided (rest)
-RUN if [ -n "$PR_REST" ]; then \
+RUN . /tmp/bashrc \
+     && if [ -n "$PR_REST" ]; then \
         echo "Checking out rest PR: $PR_REST"; \
         cd rest_workspace/rest && \
-        git fetch https://gitee.com/restgroup/rest.git pull/$PR_REST/head:pr_$PR_REST && \
+        git fetch ${RootUrle}/rest.git pull/$PR_REST/head:pr_$PR_REST && \
         git checkout pr_$PR_REST; \
     fi
 
 # checkout specific PRs if provided (rest_regression)
-RUN if [ -n "$PR_REGRESSION" ]; then \
+RUN . /tmp/bashrc \
+    && if [ -n "$PR_REGRESSION" ]; then \
         echo "Checking out rest_regression PR: $PR_REGRESSION"; \
         cd rest_workspace/rest_regression && \
-        git fetch https://gitee.com/restgroup/rest_regression.git pull/$PR_REGRESSION/head:pr_$PR_REGRESSION && \
+        git fetch ${RootUrle}/rest_regression.git pull/$PR_REGRESSION/head:pr_$PR_REGRESSION && \
         git checkout pr_$PR_REGRESSION; \
     fi
 

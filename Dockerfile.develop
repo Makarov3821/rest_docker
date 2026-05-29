@@ -25,7 +25,7 @@ export RootUrl=\${RootUrle} \n" \
         echo "\
 export IS_CHINA_ENV=False \n\
 export RootUrle=https://gitee.com/restgroup \n\
-export RootUrl=https://github.com/RESTGroup \n" \
+export RootUrl=\${RootUrle} \n" \
 >> /tmp/bashrc; \
     fi
 
