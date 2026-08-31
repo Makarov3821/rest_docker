@@ -8,8 +8,11 @@ ENV REST_EXT_DIR="/opt/dependency/lib"
 ENV REST_EXT_INC="/opt/dependency/include"
 ENV REST_BLAS_DIR="/opt/dependency/lib" 
 
+#RUN . /tmp/bashrc \
+#    && git clone https://gitee.com/restgroup/rest_workspace.git 
 RUN . /tmp/bashrc \
-    && git clone https://gitee.com/restgroup/rest_workspace.git 
+    && git config --global http.sslVerify false \
+    && git clone https://gitee.com/restgroup/rest_workspace.git
 WORKDIR /opt/rest_workspace
 
 # Clone and build REST software components
