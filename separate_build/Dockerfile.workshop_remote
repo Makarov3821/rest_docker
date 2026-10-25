@@ -1,0 +1,221 @@
+# Copy built dependencies from the previous stage
+#FROM rest_dependencies_workshop:latest AS rest
+# Set environment variables
+FROM ghcr.io/makarov3821/rest_dependencies:260524 AS rest
+WORKDIR /opt
+ENV REST_EXT_DIR="/opt/dependency/lib" 
+ENV REST_EXT_INC="/opt/dependency/include"
+ENV REST_BLAS_DIR="/opt/dependency/lib" 
+## For new GCC compatibility
+#ENV CFLAGS="-std=gnu17"
+
+## Compile MOPAC
+RUN . /tmp/bashrc \
+    && git clone --depth=1 https://gitee.com/restgroup/mopac.git -b v23.2.2 mopac \
+    && cd mopac \
+    && mkdir build && cd build \
+    && FC=gfortran cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/opt/mopac \
+    && make -j 4 \
+    && make install  
+
+# Compile HEOM
+COPY ./heom /opt/heom
+RUN . /tmp/bashrc \
+    && cd /opt/heom/HEOM-QUICK2 \
+    && make -j 24 all
+
+# Get LIRPD
+RUN git clone https://gitee.com/qirui-gao-2025/lirpd.git LIRPD
+
+
+
+## Compile REST 
+RUN . /tmp/bashrc \
+    && git clone https://gitee.com/restgroup/rest_workspace.git 
+WORKDIR /opt/rest_workspace
+
+# Clone and build REST software components
+RUN . /tmp/bashrc \
+    && git clone https://gitee.com/restgroup/rest.git rest 
+    #&& git clone ${RootUrl}/rest.git rest 
+
+RUN . /tmp/bashrc \
+    && git clone https://gitee.com/restgroup/rest_tensors.git rest_tensors
+    #&& git clone ${RootUrl}/rest_tensors.git rest_tensors
+
+RUN . /tmp/bashrc \
+    && git clone https://gitee.com/restgroup/rest_libcint.git rest_libcint
+    #&& git clone ${RootUrl}/rest_libcint.git rest_libcint
+
+RUN . /tmp/bashrc \
+    && git clone https://gitee.com/restgroup/rest_regression.git rest_regression
+    #&& git clone ${RootUrl}/rest_regression.git rest_regression
+
+# Build and verify REST
+RUN  ./Config -r github -f $FC -e
+
+ENV REST_FORTRAN_COMPILER="gfortran"                
+ENV REST_HOME="/opt/rest_workspace"                   
+ENV REST_CINT_DIR="$REST_EXT_DIR"        
+#ENV LD_LIBRARY_PATH="$REST_EXT_DIR:$LD_LIBRARY_PATH"
+ENV LD_LIBRARY_PATH="$REST_EXT_DIR"
+ENV HDF5_DIR="/opt/dependency"
+ENV REST_HDF5_DIR="/opt/dependency"
+ENV REST_XC_DIR="/opt/dependency"
+
+##for PyO3 compatibility
+#ENV PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1
+
+RUN cargo fetch  
+
+RUN cargo build --release 
+
+RUN test -f /opt/rest_workspace/target/release/rest \
+    && test -f $REST_HOME/target/release/rest_regression
+
+ENV PATH="${REST_HOME}/target/release:${PATH}" 
+
+#RUN $REST_HOME/target/release/rest_regression -p $REST_HOME/target/release/rest > $REST_HOME/target/rest_regression.log 2>&1
+#RUN cat $REST_HOME/target/rest_regression.log
+#RUN if grep -q "All regression tasks passed" "$REST_HOME/target/rest_regression.log"; then \
+#        echo "Regression check passed"; \
+#    else \
+#        (echo "Regression check failed" && exit 1); \
+#    fi
+
+# For now, a specific test may fail inside regression, but will be normal in regular calc.
+# Thus enable this to omit some error temporarily.
+#RUN if grep -q "All regression tasks passed" "$REST_HOME/target/rest_regression.log"; then \
+#        echo "Regression check passed"; \
+#    elif sed -n '/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/,/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/p' "$REST_HOME/target/rest_regression.log" \
+#    | wc -l | awk '{print $1 - 2}' && grep -q 'X: "/opt/rest_workspace/rest_regression/bench_pool/H2O_dSCF_B3LYP"' "$REST_HOME/target/rest_regression.log"; then \
+#        echo "Regression may meet a regular fault, omitting."; \
+#    else \
+#        #(echo "Regression check failed" && cat $REST_HOME/target/rest_regression.log && exit 1); \
+#        (echo "Regression check failed" && cat $REST_HOME/target/rest_regression.log); \
+#    fi
+
+
+# from a clean ubuntu image, build a compressed image with rest installed
+FROM ubuntu:jammy AS rest-final
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    sudo \
+    libblas-dev \
+    liblapack-dev \
+    wget \
+    curl \
+    vim \
+    libtool \
+    python3 \
+    python3-dev \
+    python3-pip \ 
+    pkg-config \
+    openmpi-bin \
+    openmpi-common \
+    libopenmpi-dev \    
+    #python3-numpy \
+    #python3-scipy \
+    #python3-matplotlib \
+    #python3-ase \
+    #python3-openmm \
+    #python3-h5py \
+    && apt-get autoremove --purge -y && \
+    apt-get autoclean -y && \
+    rm -rf /var/cache/apt/* /var/lib/apt/lists/*
+
+# install several python modules
+RUN pip3 install numpy scipy matplotlib ase openmm h5py geometric 
+
+ENV REST_EXT_DIR="/opt/dependency/lib" 
+ENV REST_EXT_INC="/opt/dependency/include"
+RUN mkdir -p /opt/dependency/lib /opt/dependency/include
+COPY --from=rest $REST_EXT_DIR/ $REST_EXT_DIR/
+#COPY --from=rest $REST_EXT_INC/ $REST_EXT_INC/
+COPY --from=rest /opt/rest_workspace/target/release/rest /opt/rest
+COPY --from=rest /opt/rest_workspace/rest/basis-set-pool /opt/basis-set-pool
+# make several links for basis pool
+# this is to make this build compatible for older input files
+# so the users won't get confused in changing basis path
+RUN mkdir -p /opt/rest_workspace/rest /share/apps/rust/rest
+RUN ln -s /opt/basis-set-pool /opt/rest_workspace/rest/basis-set-pool
+RUN ln -s /opt/basis-set-pool /share/apps/rust/rest/basis-set-pool
+
+WORKDIR /opt
+
+
+## eXtended ONIOM (XO)
+# MOPAC 
+RUN mkdir -p /opt/mopac
+COPY --from=rest /opt/mopac/lib /opt/mopac/lib 
+COPY --from=rest /opt/mopac/bin /opt/mopac/bin
+# scripts
+RUN mkdir -p /opt/XO
+COPY ./XO /opt/XO
+
+# HEOM
+COPY --from=rest /opt/heom /opt/heom
+
+# LIRPD
+COPY --from=rest /opt/LIRPD /opt/LIRPD
+
+
+# add a sudo user to let mpirun work without warning
+RUN useradd -m -s /bin/bash admin && echo "admin:password" | chpasswd
+RUN usermod -aG sudo admin
+RUN echo "admin ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
+USER admin
+
+# About permission
+RUN sudo chown admin:admin -R /opt/XO
+RUN sudo chown admin:admin -R /opt/LIRPD
+RUN sudo chown admin:admin -R /opt/heom
+
+# About workdir
+RUN sudo mkdir -p /opt/workdir
+RUN sudo chown admin:admin /opt/workdir
+RUN sudo chmod 777 /opt/workdir
+WORKDIR /opt/workdir
+
+ENV PATH="/opt/mopac/bin:/opt/XO/rest_xo:/opt/rest_workspace/target/release:/opt:${PATH}" 
+
+ENV LD_LIBRARY_PATH="$REST_EXT_DIR:/opt/heom/mkl_libs"
+
+ENV LIRPD=/opt/LIRPD
+
+# For better usage
+RUN sudo ln -s /usr/bin/python3 /usr/bin/python
+
+
+
+
+# For XO runtime
+RUN chmod 755 /opt/XO/rest_xo/*.py
+RUN sudo find /opt/XO/rest_xo -type f -name "*.py" \
+    -exec sed -i 's|^#!/usr/bin/env python$|#!/usr/bin/env python3|' {} +
+
+# set envs for root's development, if run `sudo su -`
+RUN echo "\
+\n\
+# RUST Enviroments  \n\
+export CC=gcc \n\
+export CXX=g++ \n\
+export FC=gfortran \n\
+export CARGO_HOME=/opt/.cargo \n\
+export RUSTUP_HOME=/opt/.rustup \n\
+export REST_EXT_DIR=/opt/dependency/lib \n\
+export REST_EXT_INC=/opt/dependency/include \n\
+export REST_BLAS_DIR=/opt/dependency/lib \n\
+export REST_BASIS_DIR=/opt/basis-set-pool \n\
+export REST_FORTRAN_COMPILER=gfortran \n\
+export REST_HOME=/opt/rest_workspace \n\
+export HDF5_DIR=/opt/dependency \n\
+export REST_HDF5_DIR=/opt/dependency \n\
+export PATH=/opt:/opt/mopac/bin:/opt/XO/rest_xo:\$REST_HOME/utilities:\$REST_HOME/target/release:/opt/.cargo/bin:\$PATH \n\
+export LD_LIBRARY_PATH=\$REST_EXT_DIR:/opt/heom/mkl_libs:\$LD_LIBRARY_PATH \n\
+export PYTHONPATH=/opt/XO/rest_xo:\$PYTHONPATH \n\
+export LIRPD=/opt/LIRPD \n\
+" >> $HOME/.bashrc
+
+
+

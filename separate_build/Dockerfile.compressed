@@ -43,6 +43,8 @@ ENV REST_XC_DIR="/opt/dependency"
 
 RUN cargo fetch  
 
+RUN pip3 install ase
+
 RUN cargo build --release 
 
 RUN test -f /opt/rest_workspace/target/release/rest \
@@ -50,8 +52,10 @@ RUN test -f /opt/rest_workspace/target/release/rest \
 
 ENV PATH="${REST_HOME}/target/release:${PATH}" 
 
+RUN python3 -c "import ase; print('import ok'); print(ase.__version__)"
+
 #RUN $REST_HOME/target/release/rest_regression -p $REST_HOME/target/release/rest > $REST_HOME/target/rest_regression.log 2>&1 || (cat $REST_HOME/target/rest_regression.log && cat ./work_pool/C4H4_mix_yamaguchi.log && exit 1)
-#RUN cat $REST_HOME/target/rest_regression.log
+##RUN cat $REST_HOME/target/rest_regression.log
 #RUN if grep -q "All regression tasks passed" "$REST_HOME/target/rest_regression.log"; then \
 #        echo "Regression check passed"; \
 #    else \
@@ -103,7 +107,7 @@ COPY --from=rest /opt/rest_workspace/target/release/rest /opt/rest
 COPY --from=rest /opt/rest_workspace/rest/basis-set-pool /opt/basis-set-pool
 
 # Needed for geomeTRIC
-RUN pip3 install numpy scipy geometric
+RUN pip3 install numpy scipy geometric ase
 
 # set envs for root's development, if run `sudo su -`
 RUN echo "\
