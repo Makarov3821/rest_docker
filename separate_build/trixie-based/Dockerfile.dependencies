@@ -1,0 +1,351 @@
+# syntax=docker/dockerfile:1
+
+#Define the build argument
+ARG CHINA=False
+
+# 1. Define the base image
+FROM rust:slim-trixie AS base
+
+# Define the build argument for conditional logic
+ARG CHINA
+
+# Use shell logic to set the ENV variable based on the build argument
+RUN if [ "$CHINA" = "True" ]; then \
+        echo "Setting IS_CHINA_ENV=True"; \
+        echo "\
+export IS_CHINA_ENV=True \n\
+export RootUrle=https://gitee.com/restgroup \n\
+export RootUrl=\${RootUrle} \n" \
+>> /tmp/bashrc; \
+    else \
+        echo "Setting IS_CHINA_ENV=False"; \
+        echo "\
+export IS_CHINA_ENV=False \n\
+export RootUrle=https://gitee.com/restgroup \n\
+export RootUrl=https://github.com/RESTGroup \n" \
+>> /tmp/bashrc; \
+    fi
+
+# Prevent interactive prompts during installation
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Set compilers for C, C++, and Fortran
+ENV CC=gcc
+ENV CXX=g++
+ENV FC=gfortran
+# Bindgen needs libclang and its resource headers, not the full Clang SDK.
+ENV LIBCLANG_PATH=/usr/lib/llvm-19/lib
+
+# Set the working directory for subsequent commands
+WORKDIR /opt
+
+# Mirror Debian packages inside China while keeping security updates on the official source.
+RUN . /tmp/bashrc \
+    && if [ "$IS_CHINA_ENV" = "True" ]; then \
+        sed -i -e 's|https\?://deb.debian.org/debian-security|https://security.debian.org/debian-security|g' \
+               -e 's|https\?://deb.debian.org/debian|https://mirrors.tuna.tsinghua.edu.cn/debian|g' \
+            /etc/apt/sources.list.d/debian.sources; \
+    fi
+
+# Keep the reusable REST build environment in base. Native-library-only tools
+# are installed in the disposable dependencies stage below.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    build-essential \
+    gcc \
+    g++ \
+    gfortran \
+    libblas-dev \
+    liblapack-dev \
+    libssl-dev \
+    openssh-client \
+    curl \
+    git \
+    cmake \
+    python3 \
+    python3-dev \
+    python3-pip \
+    pkg-config \
+    openmpi-bin \
+    openmpi-common \
+    libopenmpi-dev \
+    libclang1-19 \
+    libclang-common-19-dev \
+    && ln -sf libclang-19.so.1 "$LIBCLANG_PATH/libclang.so" \
+    && apt-get autoremove --purge -y && \
+    apt-get autoclean -y && \
+    rm -rf /var/cache/apt/* /var/lib/apt/lists/*
+
+RUN git config --global http.postBuffer 524288000 \
+    && git config --global http.lowSpeedLimit 0 \
+    && git config --global http.lowSpeedTime 999999
+
+# Use the Rust toolchain and CARGO_HOME/RUSTUP_HOME inherited from the base image.
+
+# Configure Cargo to use China mirrors
+RUN . /tmp/bashrc \
+    && if [ "$IS_CHINA_ENV" = "True" ]; then \
+    mkdir -p "$CARGO_HOME" && \
+    echo "\
+[source.crates-io] \n\
+replace-with = 'ustc' \n\
+[source.ustc] \n\
+registry = 'sparse+https://mirrors.ustc.edu.cn/crates.io-index/' \n\
+[registries.ustc] \n\
+index = 'sparse+https://mirrors.ustc.edu.cn/crates.io-index/' \n\
+[source.tuna] \n\
+registry = 'sparse+https://mirrors.tuna.tsinghua.edu.cn/crates.io-index/' \n\
+" > "$CARGO_HOME/config.toml"; \
+    fi
+
+# Verify Rust and Cargo installation
+RUN rustc --version && cargo --version
+
+# Clone the workspace repository and configure environment paths
+#RUN . /tmp/bashrc \
+#    && git clone ${RootUrl}/rest_workspace.git \
+#    && mkdir -p /opt/rest_workspace/lib /opt/rest_workspace/include
+#RUN . /tmp/bashrc \
+#    && git clone https://gitee.com/restgroup/rest_workspace.git \
+#    && mkdir -p /opt/rest_workspace/lib /opt/rest_workspace/include
+
+ENV REST_EXT_DIR="/opt/dependency/lib" 
+ENV REST_EXT_INC="/opt/dependency/include"
+ENV REST_BLAS_DIR="/opt/dependency/lib" 
+RUN mkdir -p /opt/dependency/lib /opt/dependency/include
+
+# Use Debian's system Python for pip packages and PyO3.
+ENV PYO3_PYTHON=/usr/bin/python3
+
+# Persist the China pip mirror globally for downstream build stages.
+RUN if [ "$CHINA" = "True" ]; then \
+        python3 -m pip config --global set global.index-url https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple; \
+    fi \
+    && python3 -m pip install --break-system-packages --no-cache-dir geometric \
+    && python3 -m pip check \
+    && python3 -c "import ctypes, geometric, os, sys; assert sys.version_info[:2] == (3, 13); assert sys.prefix == sys.base_prefix; ctypes.CDLL(os.path.join(os.environ['LIBCLANG_PATH'], 'libclang.so')); print('System Python 3.13, geomeTRIC and libclang ready')"
+
+# =======================================================================
+# Prepare prerequisites in a separate layer
+FROM base AS dependencies
+
+# These tools build the scientific libraries and do not enter dependencies-final.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    autoconf \
+    automake \
+    bc \
+    libgtest-dev \
+    libtool \
+    && rm -rf /var/cache/apt/* /var/lib/apt/lists/*
+
+# set repository url enviroment
+RUN echo "\
+export OMP_NUM_THREADS=128 \n\
+export url_blas=\${RootUrl}/OpenBLAS.git \n\
+export url_libcint=\${RootUrl}/libcint.git \n\
+export url_hdf5=\${RootUrl}/hdf5.git \n\
+export url_ninja=\${RootUrl}/ninja.git \n\
+export url_dftd3=\${RootUrl}/simple-dftd3.git \n\
+export url_dftd4=\${RootUrl}/dftd4.git \n\
+export url_mctc=\${RootUrl}/mctc-lib.git \n\
+export url_toml=\${RootUrl}/toml-f.git \n\
+export url_mstore=\${RootUrl}/mstore.git \n\
+export url_drive=\${RootUrl}/test-drive.git \n\
+export LD_LIBRARY_PATH=/opt/dependency/lib \n\
+export LIBRARY_PATH=/opt/dependency/lib \n\
+" >> /tmp/bashrc
+
+RUN . /tmp/bashrc \
+    && if [ "$IS_CHINA_ENV" = "True" ]; then \
+        echo "\
+export url_libxc=\${RootUrle}/libxc.git \n \
+export url_MOKIT=\${RootUrle}/MOKIT.git \n" \
+        >> /tmp/bashrc; \
+    else \
+        echo "\
+export url_libxc=https://gitlab.com/libxc/libxc.git \n\
+export url_MOKIT=https://gitlab.com/jxzou/MOKIT.git \n" \
+        >> /tmp/bashrc; \
+    fi
+
+# Build and install OpenBLAS library
+RUN . /tmp/bashrc \
+    && git clone --depth=1 ${url_blas} -b v0.3.28 OpenBLAS \
+    && cd OpenBLAS \
+    && make DYNAMIC_ARCH=1 USE_OPENMP=1 NUM_THREADS=256 \
+    && cp -d libopenblas*.so* $REST_EXT_DIR/
+
+# Build and install libcint library
+RUN . /tmp/bashrc \
+    && git clone --depth=1 ${url_libcint} -b v6.1.2 libcint \
+    && cd libcint \
+    && mkdir build && cd build \
+    && cmake -DWITH_RANGE_COULOMB=1 .. \
+    && make -j \
+    && cp -d libcint.so* $REST_EXT_DIR/
+
+# Build and install libxc library
+RUN . /tmp/bashrc \
+    && git clone --depth=1 ${url_libxc} -b 7.0.0 libxc \
+    && cd libxc \
+    && autoreconf -i \
+    && ./configure --prefix=$(pwd) --enable-shared \
+    && make -j && make install \
+    #&& cp lib/libxc.a  $REST_EXT_DIR/ \
+    && cp -d lib/libxc.so* $REST_EXT_DIR/ 
+
+
+# Build and install HDF5 library
+RUN . /tmp/bashrc \
+    && git clone --depth=1 ${url_hdf5} -b hdf5_1.14.5 hdf5_src \
+    && cd hdf5_src \
+    && ./configure --prefix=/opt/hdf5 \
+    && make -j && make -j install \
+    && cd /opt/hdf5 \
+    && cp -d lib/libhdf5*.so* $REST_EXT_DIR/ \
+    && cp include/* $REST_EXT_INC/
+
+# Build REST-specific dependencies like librest2fch and DFT libraries
+# Install librest2fch for converting quantum chemistry formats
+RUN . /tmp/bashrc \
+    && git clone ${url_MOKIT} -b master MOKIT \
+    && cd MOKIT/src \
+    && make rest2fch -f Makefile.gnu_openblas \
+    && cp -d ../mokit/lib/librest2fch.so* $REST_EXT_DIR/
+
+# Install ninja
+RUN . /tmp/bashrc \
+    && git clone --depth=1 ${url_ninja} -b v1.12.1 ninja \
+    && cd ninja \
+    && cmake -B build-cmake \
+    && cmake --build build-cmake -j \
+    && mv build-cmake/ninja /usr/local/bin/ 
+
+# Install dftd3 (Dispersion Correction)
+
+RUN . /tmp/bashrc \
+    && git clone --depth=1 ${url_dftd3} -b v1.2.1 \
+    && cd simple-dftd3 \
+    && mkdir -p build/_deps \
+    && git clone ${url_drive} build/_deps/test-drive-src \
+    && cd build/_deps/test-drive-src \
+    && cmake -B ../test-drive-subbuild -G Ninja \
+    && cmake --build ../test-drive-subbuild -j
+
+RUN . /tmp/bashrc \
+    && cd simple-dftd3 \
+    && find . -type f -exec sed -i "s|https://github.com/grimme-lab/mctc-lib|${url_mctc}|g" {} + \
+    && find . -type f -exec sed -i "s|https://github.com/grimme-lab/mstore|${url_mstore}|g" {} + \
+    && find . -type f -exec sed -i "s|https://github.com/toml-f/toml-f|${url_toml}|g" {} + \
+    && cmake -B build -G Ninja -DBUILD_SHARED_LIBS=1 \
+    && cmake --build build -j \
+    && cp -d build/libs-dftd3.so.* $REST_EXT_DIR/ \
+    && cd $REST_EXT_DIR && ln -sf libs-dftd3.so.1 libs-dftd3.so \
+    && mkdir -p $REST_EXT_INC/dftd3 \
+    && find build -name *.mod | xargs -I {} cp {} $REST_EXT_INC/dftd3 
+
+# Build dftd4 for advanced dispersion correction
+RUN . /tmp/bashrc \
+    && git clone --depth=1 ${url_dftd4} -b v3.7.0 \
+    && cd dftd4 \
+    && mkdir -p build/_deps \
+    && git clone ${url_drive} build/_deps/test-drive-src \
+    && cd build/_deps/test-drive-src \
+    && cmake -B ../test-drive-subbuild -G Ninja \
+    && cmake --build ../test-drive-subbuild 
+RUN . /tmp/bashrc \
+    && cd dftd4 \
+    && mkdir -p build/_deps \
+    && git clone ${RootUrl}/multicharge build/_deps/multicharge-src \
+    && cd build/_deps/multicharge-src \
+    && find . -type f -exec sed -i "s|https://github.com/grimme-lab/mctc-lib|${url_mctc}|g" {} + \
+    && find . -type f -exec sed -i "s|https://github.com/grimme-lab/mstore|${url_mstore}|g" {} + \
+    && find . -type f -exec sed -i "s|https://github.com/toml-f/toml-f|${url_toml}|g" {} + \
+    && find . -type f -exec sed -i "s|https://github.com/toml-f/toml-f|${RootUrl}/multicharge|g" {} + \
+    && cmake -B ../multicharge-subbuild -G Ninja \
+    && cmake --build ../multicharge-subbuild 
+    #&& find . -type f -exec sed -i "s|https://github.com/toml-f/toml-f|${RootUrle}/multicharge|g" {} + \
+
+RUN . /tmp/bashrc \
+    && cd dftd4 \
+    && find . -type f -exec sed -i "s|https://github.com/grimme-lab/mctc-lib|${url_mctc}|g" {} + \
+    && find . -type f -exec sed -i "s|https://github.com/grimme-lab/mstore|${url_mstore}|g" {} + \
+    && find . -type f -exec sed -i "s|https://github.com/toml-f/toml-f|${url_toml}|g" {} + \
+    && find . -type f -exec sed -i "s|https://github.com/toml-f/toml-f|${RootUrl}/multicharge|g" {} + \
+    && cmake -B build -G Ninja -DBUILD_SHARED_LIBS=1 \
+    && cmake --build build \
+    && mkdir -p $REST_EXT_INC/dftd4 \
+    && cp -d build/libdftd4.so.* $REST_EXT_DIR/ \
+    && cp -d build/_deps/multicharge-build/libmulticharge.so.* $REST_EXT_DIR/ \
+    && cp -d build/_deps/mctc-lib-build/libmctc-lib.so.* $REST_EXT_DIR/ \
+    && find build -name *.mod | xargs -I {} cp {} $REST_EXT_INC/dftd4 
+    #&& find . -type f -exec sed -i "s|https://github.com/toml-f/toml-f|${RootUrle}/multicharge|g" {} + \
+
+# Build native C/C++ TBLIS once in dependencies. The Rust source crate bundles
+# the matching native source; 0.2.6 is the crate version, not TBLIS's version.
+ARG TBLIS_SRC_VERSION=0.2.6
+RUN <<'SH'
+set -eu
+. /tmp/bashrc
+mkdir -p /opt/tblis-build
+cd /opt/tblis-build
+if [ "$IS_CHINA_ENV" = "True" ]; then
+    cargo info --registry ustc "tblis-src@$TBLIS_SRC_VERSION"
+else
+    cargo info "tblis-src@$TBLIS_SRC_VERSION"
+fi
+tblis_source="$(find "$CARGO_HOME/registry/src" -type d -path "*/tblis-src-$TBLIS_SRC_VERSION/external_deps/tblis" -print -quit)"
+test -n "$tblis_source"
+test -f "$tblis_source/CMakeLists.txt"
+case "$(uname -m)" in
+    x86_64) tblis_family=x86_64 ;;
+    aarch64) tblis_family=arm64 ;;
+    *) tblis_family=generic ;;
+esac
+cmake -S "$tblis_source" -B /opt/tblis-build/build \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_INSTALL_PREFIX=/opt/tblis-build/install \
+    -DCMAKE_INSTALL_LIBDIR=lib \
+    -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+    -DENABLE_SHARED=ON -DENABLE_STATIC=OFF -DENABLE_TESTS=OFF \
+    -DBLIS_CONFIG_FAMILY="$tblis_family"
+cmake --build /opt/tblis-build/build --parallel "${CMAKE_BUILD_PARALLEL_LEVEL:-4}"
+cmake --install /opt/tblis-build/build
+find /opt/tblis-build/install \( -type f -o -type l \) -name '*.so*' \
+    -exec cp -a -t "$REST_EXT_DIR" -- {} +
+cp -a /opt/tblis-build/install/include/. "$REST_EXT_INC/"
+test -f "$REST_EXT_DIR/libtblis.so"
+python3 -c 'import ctypes, os; ctypes.CDLL(os.path.join(os.environ["REST_EXT_DIR"], "libtblis.so"))'
+printf '{\n  "library": "libtblis.so",\n  "tblis_src_version": "%s",\n  "tblis_version": "%s",\n  "tblis_ffi_series": "%s",\n  "blis_revision": "%s",\n  "architecture_family": "%s"\n}\n' \
+    "$TBLIS_SRC_VERSION" "$(cat "$tblis_source/tblis-version")" \
+    "$(printf '%s' "$TBLIS_SRC_VERSION" | cut -d. -f1,2)" \
+    "$(cat "$tblis_source/blis-git-tag")" "$tblis_family" \
+    > /opt/tblis-build-info.json
+SH
+
+# Strip before the final COPY, so unstripped libraries never enter a final layer.
+# Check that all defined dynamic symbols (including their addresses) are unchanged.
+RUN set -eu; \
+    du -sh "$REST_EXT_DIR"; \
+    for library in "$REST_EXT_DIR"/*.so*; do \
+        if [ -f "$library" ] && [ ! -L "$library" ]; then \
+            exports_before="$(nm -D --defined-only "$library")"; \
+            strip --strip-debug "$library"; \
+            test "$exports_before" = "$(nm -D --defined-only "$library")"; \
+        fi; \
+    done; \
+    du -sh "$REST_EXT_DIR"
+
+# Remove intermediate
+RUN rm -rf /opt/OpenBLAS /opt/libcint /opt/libxc /opt/hdf5_src \
+           /opt/MOKIT /opt/ninja /opt/simple-dftd3 /opt/dftd4 
+
+
+
+# ===========================================
+# Save dependencies image
+FROM base AS dependencies-final
+# Copy built dependencies from the previous stage
+COPY --from=dependencies $REST_EXT_DIR/ $REST_EXT_DIR/
+COPY --from=dependencies $REST_EXT_INC/ $REST_EXT_INC/
+COPY --from=dependencies /opt/tblis-build-info.json /opt/tblis-build-info.json

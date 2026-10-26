@@ -1,0 +1,304 @@
+# syntax=docker/dockerfile:1
+
+ARG DEPENDENCIES_IMAGE=rest_dependencies:trixie-slim
+ARG CHINA=False
+
+FROM ${DEPENDENCIES_IMAGE} AS rest
+ARG CHINA
+
+ENV REST_EXT_DIR=/opt/dependency/lib
+ENV REST_EXT_INC=/opt/dependency/include
+ENV REST_BLAS_DIR=/opt/dependency/lib
+ENV REST_FORTRAN_COMPILER=gfortran
+ENV REST_HOME=/opt/rest_workspace
+ENV REST_CINT_DIR=/opt/dependency/lib
+ENV LD_LIBRARY_PATH=/opt/dependency/lib
+ENV HDF5_DIR=/opt/dependency
+ENV REST_HDF5_DIR=/opt/dependency
+ENV REST_XC_DIR=/opt/dependency
+ENV PYO3_PYTHON=/usr/bin/python3
+
+WORKDIR /opt
+RUN git clone https://gitee.com/restgroup/rest_workspace.git
+WORKDIR /opt/rest_workspace
+RUN git clone https://gitee.com/restgroup/rest.git rest \
+    && git clone https://gitee.com/restgroup/rest_tensors.git rest_tensors \
+    && git clone https://gitee.com/restgroup/rest_libcint.git rest_libcint \
+    && git clone https://gitee.com/restgroup/rest_regression.git rest_regression \
+    && ./Config -r gitee -f "$FC" -e
+
+# Pin the four Python entry packages to the versions used by this build.
+# Wheel archives stay in the build stage and are mounted only during installation.
+RUN if [ "$CHINA" = "True" ]; then \
+        python3 -m pip config --global set global.index-url https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple; \
+    fi \
+    && python3 -m pip install --break-system-packages --no-cache-dir ase \
+    && python3 -m pip check \
+    && python3 -c "import sys; assert sys.version_info[:2] == (3, 13)" \
+    && mkdir -p /opt/runtime-wheels \
+    && python3 -c "from importlib.metadata import version; print('\n'.join(name + '==' + version(name) for name in ('numpy', 'scipy', 'geometric', 'ase')))" > /opt/runtime-wheels/requirements.txt \
+    && python3 -m pip wheel --no-cache-dir --wheel-dir /opt/runtime-wheels -r /opt/runtime-wheels/requirements.txt
+
+RUN cargo fetch
+RUN python3 - <<'PY'
+import ctypes
+import json
+import os
+from pathlib import Path
+import tomllib
+
+
+def check(workspace, library_dir, build_info):
+    lock = tomllib.loads((workspace / "Cargo.lock").read_text())
+    versions = sorted({entry["version"] for entry in lock.get("package", []) if entry["name"] == "tblis-ffi"})
+    if not versions:
+        return {"required_libraries": [], "tblis_ffi_versions": []}
+    if not build_info.is_file() or not (library_dir / "libtblis.so").is_file():
+        raise RuntimeError(
+            "The dependencies image does not contain prebuilt TBLIS and its version metadata. "
+            "Rebuild Dockerfile.dependencies with --target dependencies-final before building compressed."
+        )
+    metadata = json.loads(build_info.read_text())
+    series = {".".join(version.split(".")[:2]) for version in versions}
+    if series != {metadata["tblis_ffi_series"]}:
+        raise RuntimeError(
+            f"REST requires tblis-ffi {versions}; dependencies provides tblis-src "
+            f"{metadata['tblis_src_version']}. Review the ABI and rebuild dependencies "
+            "with an appropriate TBLIS_SRC_VERSION."
+        )
+    library = ctypes.CDLL(str(library_dir / "libtblis.so"))
+    for symbol in ("tblis_init_tensor_d", "tblis_tensor_mult", "tblis_set_num_threads", "tblis_get_num_threads"):
+        if not hasattr(library, symbol):
+            raise RuntimeError(f"Prebuilt TBLIS lacks required symbol: {symbol}")
+    return {"required_libraries": ["libtblis.so"], "tblis_ffi_versions": versions, "tblis_build": metadata}
+
+
+if __name__ == "__main__":
+    try:
+        result = check(
+            Path(os.environ["REST_HOME"]), Path(os.environ["REST_EXT_DIR"]),
+            Path("/opt/tblis-build-info.json"),
+        )
+        Path("/opt/native-runtime-requirements.json").write_text(json.dumps(result, indent=2) + "\n")
+    except Exception as error:
+        raise SystemExit(f"Native dependency check failed: {error}") from None
+PY
+RUN cargo build --release --locked \
+    && test -x "$REST_HOME/target/release/rest" \
+    && test -x "$REST_HOME/target/release/rest_regression" \
+    && strip --strip-debug "$REST_HOME/target/release/rest"
+
+# Run the full upstream suite as root immediately after compiling REST.
+# Open MPI's root override is scoped to this build step only.
+USER root
+RUN <<'SH'
+set -eu
+export PATH="$REST_HOME/target/release:$PATH"
+export REST_BASIS_DIR="$REST_HOME/rest/basis-set-pool"
+export OMPI_ALLOW_RUN_AS_ROOT=1
+export OMPI_ALLOW_RUN_AS_ROOT_CONFIRM=1
+regression_runner="$REST_HOME/target/release/rest_regression"
+regression_rest="$REST_HOME/target/release/rest"
+regression_tmp="$(mktemp -d /tmp/rest-regression.XXXXXX)"
+trap 'rm -rf "$regression_tmp"' EXIT
+cd "$REST_HOME/rest_regression"
+regression_status=0
+"$regression_runner" -p "$regression_rest" \
+    -r "$REST_HOME/rest_regression/bench_pool" \
+    -w "$regression_tmp/work_pool" > "$regression_tmp/regression.log" 2>&1 \
+    || regression_status=$?
+cat "$regression_tmp/regression.log"
+# Require a successful process, a real executed test and the suite's pass marker.
+if [ "$regression_status" -ne 0 ] \
+    || ! grep -q '^Start regression task: ' "$regression_tmp/regression.log" \
+    || ! grep -Fxq 'All regression tasks passed' "$regression_tmp/regression.log"; then
+    echo "Regression failed or no tests executed (exit $regression_status)." >&2
+    if [ -d "$regression_tmp/work_pool" ]; then
+        find "$regression_tmp/work_pool" -type f -name '*.log' -exec tail -n 80 {} +
+    fi
+    exit 1
+fi
+SH
+
+# A clean runtime: no Rust toolchain, compilers, development packages or sources.
+FROM debian:trixie-slim AS rest-final
+ARG CHINA
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Debian slim has no CA bundle yet; mount the build image's bundle for HTTPS APT.
+RUN --mount=type=bind,from=rest,source=/etc/ssl/certs/ca-certificates.crt,target=/tmp/bootstrap-ca.crt \
+    if [ "$CHINA" = "True" ]; then \
+        sed -i -e 's|https\?://deb.debian.org/debian-security|https://security.debian.org/debian-security|g' \
+               -e 's|https\?://deb.debian.org/debian|https://mirrors.tuna.tsinghua.edu.cn/debian|g' \
+            /etc/apt/sources.list.d/debian.sources; \
+    fi \
+    && apt-get -o Acquire::https::CaInfo=/tmp/bootstrap-ca.crt update \
+    && apt-get -o Acquire::https::CaInfo=/tmp/bootstrap-ca.crt install -y --no-install-recommends \
+        ca-certificates \
+        libatomic1 \
+        libblas3 \
+        libgfortran5 \
+        libgomp1 \
+        liblapack3 \
+        libpython3.13 \
+        libquadmath0 \
+        libssl3t64 \
+        libstdc++6 \
+        openmpi-bin \
+        python3 \
+        python3-pip \
+        zlib1g \
+    && rm -rf /var/cache/apt/* /var/lib/apt/lists/*
+
+ENV REST_EXT_DIR=/opt/dependency/lib
+ENV REST_BLAS_DIR=/opt/dependency/lib
+ENV REST_BASIS_DIR=/opt/basis-set-pool
+ENV REST_HOME=/opt/rest_workspace
+ENV REST_CINT_DIR=/opt/dependency/lib
+ENV HDF5_DIR=/opt/dependency
+ENV REST_HDF5_DIR=/opt/dependency
+ENV REST_XC_DIR=/opt/dependency
+ENV LD_LIBRARY_PATH=/opt/dependency/lib
+ENV PATH="/opt:${PATH}"
+ENV PYTHONDONTWRITEBYTECODE=1
+
+COPY --from=rest /opt/dependency/lib/ /opt/dependency/lib/
+COPY --from=rest /opt/rest_workspace/target/release/rest /opt/rest
+COPY --from=rest /opt/rest_workspace/rest/basis-set-pool /opt/basis-set-pool
+COPY --from=rest /opt/runtime-wheels/requirements.txt /opt/python-runtime-requirements.txt
+COPY --from=rest /opt/native-runtime-requirements.json /opt/native-runtime-requirements.json
+
+RUN --mount=type=bind,from=rest,source=/opt/runtime-wheels,target=/wheels \
+    if [ "$CHINA" = "True" ]; then \
+        python3 -m pip config --global set global.index-url https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple; \
+    fi \
+    && python3 -m pip install --break-system-packages --no-cache-dir --no-compile \
+        --no-index --find-links=/wheels -r /wheels/requirements.txt \
+    && python3 -m pip check
+
+# Keep the environment file and basis paths used by older Docker/SIF commands.
+RUN printf '%s\n' \
+        'export REST_EXT_DIR=/opt/dependency/lib' \
+        'export REST_BLAS_DIR="$REST_EXT_DIR"' \
+        'export REST_BASIS_DIR=/opt/basis-set-pool' \
+        'export REST_HOME=/opt/rest_workspace' \
+        'export REST_CINT_DIR="$REST_EXT_DIR"' \
+        'export HDF5_DIR=/opt/dependency' \
+        'export REST_HDF5_DIR=/opt/dependency' \
+        'export REST_XC_DIR=/opt/dependency' \
+        'export LD_LIBRARY_PATH="$REST_EXT_DIR${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"' \
+        'export PATH="/opt:$PATH"' \
+        > /opt/rest_env \
+    && mkdir -p /opt/rest_workspace/rest /share/apps/rust/rest \
+    && ln -s /opt/basis-set-pool /opt/rest_workspace/rest/basis-set-pool \
+    && ln -s /opt/basis-set-pool /share/apps/rust/rest/basis-set-pool \
+    && useradd --create-home --shell /bin/bash admin \
+    && mkdir -p /data \
+    && chown admin:admin /data
+
+WORKDIR /data
+USER admin
+
+# Check after switching users, in the actual final image rather than the SDK.
+RUN python3 - <<'PY'
+import ctypes
+from importlib import import_module
+from importlib.metadata import version
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+
+
+def main():
+    if sys.version_info[:2] != (3, 13):
+        raise RuntimeError(f"Expected Python 3.13, got {sys.version}")
+    if os.geteuid() == 0:
+        raise RuntimeError("Runtime verification must run as the non-root user")
+    if not os.access("/data", os.W_OK):
+        raise RuntimeError("The runtime user cannot write to /data")
+
+    versions = {}
+    for requirement in Path("/opt/python-runtime-requirements.txt").read_text().splitlines():
+        name, expected = requirement.split("==", 1)
+        actual = version(name)
+        if actual != expected:
+            raise RuntimeError(f"{name}: expected {expected}, installed {actual}")
+        import_module(name)
+        versions[name] = actual
+
+    import numpy as np
+    from scipy.linalg import eigh
+
+    matrix = np.array([[2.0, 1.0], [1.0, 2.0]])
+    np.testing.assert_allclose(eigh(matrix, eigvals_only=True), [1.0, 3.0])
+
+    basis = Path(os.environ["REST_BASIS_DIR"])
+    if not basis.is_dir() or not any(basis.iterdir()):
+        raise RuntimeError(f"Missing or empty basis set pool: {basis}")
+    for legacy in ("/opt/rest_workspace/rest/basis-set-pool", "/share/apps/rust/rest/basis-set-pool"):
+        if Path(legacy).resolve() != basis.resolve():
+            raise RuntimeError(f"Broken compatibility basis path: {legacy}")
+
+    library_dir = Path(os.environ["REST_EXT_DIR"])
+    required = json.loads(Path("/opt/native-runtime-requirements.json").read_text())
+    for name in required["required_libraries"]:
+        if not (library_dir / name).is_file():
+            raise RuntimeError(f"Missing dynamically loaded library: {name}")
+    libraries = sorted(
+        path for path in library_dir.glob("*.so*")
+        if path.is_file() and not path.is_symlink()
+    )
+    if not libraries:
+        raise RuntimeError("No native REST libraries were copied")
+    for path in [Path("/opt/rest"), *libraries]:
+        linked = subprocess.run(["ldd", str(path)], capture_output=True, text=True, check=True)
+        if "not found" in linked.stdout or "not found" in linked.stderr:
+            raise RuntimeError(f"Missing runtime dependency for {path}:\n{linked.stdout}\n{linked.stderr}")
+    for path in libraries:
+        ctypes.CDLL(str(path))
+
+    subprocess.run(["/opt/rest", "--help"], capture_output=True, text=True, check=True, timeout=60)
+    subprocess.run(["mpirun", "--version"], capture_output=True, text=True, check=True, timeout=30)
+    print(json.dumps({"python": sys.version.split()[0], "packages": versions, "native_libraries": len(libraries), "rest_help": "passed", "mpi_version": "passed"}))
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception as error:
+        raise SystemExit(f"Runtime verification failed: {error}") from None
+PY
+
+# Repeat the suite as admin against /opt/rest and the final runtime libraries.
+# The runner and suite are read-only mounts; work files are removed in this RUN.
+RUN --mount=type=bind,from=rest,source=/opt/rest_workspace/target/release/rest_regression,target=/tmp/rest_regression \
+    --mount=type=bind,from=rest,source=/opt/rest_workspace/rest_regression,target=/opt/rest_workspace/rest_regression \
+    <<'SH'
+set -eu
+regression_runner=/tmp/rest_regression
+regression_rest=/opt/rest
+regression_tmp="$(mktemp -d /tmp/rest-regression.XXXXXX)"
+trap 'rm -rf "$regression_tmp"' EXIT
+cd "$REST_HOME/rest_regression"
+regression_status=0
+"$regression_runner" -p "$regression_rest" \
+    -r "$REST_HOME/rest_regression/bench_pool" \
+    -w "$regression_tmp/work_pool" > "$regression_tmp/regression.log" 2>&1 \
+    || regression_status=$?
+cat "$regression_tmp/regression.log"
+# Require a successful process, a real executed test and the suite's pass marker.
+if [ "$regression_status" -ne 0 ] \
+    || ! grep -q '^Start regression task: ' "$regression_tmp/regression.log" \
+    || ! grep -Fxq 'All regression tasks passed' "$regression_tmp/regression.log"; then
+    echo "Regression failed or no tests executed (exit $regression_status)." >&2
+    if [ -d "$regression_tmp/work_pool" ]; then
+        find "$regression_tmp/work_pool" -type f -name '*.log' -exec tail -n 80 {} +
+    fi
+    exit 1
+fi
+SH
+
+ENTRYPOINT ["/bin/bash", "-c", "source /opt/rest_env && exec /opt/rest \"$@\"", "--"]
+CMD []
