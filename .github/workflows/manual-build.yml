@@ -284,7 +284,16 @@ jobs:
           printf '%s  %s\n' "${checksum#sha256:}" "$install_dir/$package" | sha256sum --check -
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends "$install_dir/$package"
-          test "$(singularity version)" = "$SINGULARITY_VERSION"
+          installed_version="$(singularity version)"
+          printf 'Installed SingularityCE version: %s\n' "$installed_version"
+          case "$installed_version" in
+            "$SINGULARITY_VERSION"|"${SINGULARITY_VERSION}-noble") ;;
+            *)
+              printf '::error::Expected SingularityCE %s (optional -noble suffix), got %s\n' \
+                "$SINGULARITY_VERSION" "$installed_version"
+              exit 1
+              ;;
+          esac
       - name: Convert this exact REST image to SIF and run its smoke calculation
         if: inputs.target != 'dependencies'
         env:
