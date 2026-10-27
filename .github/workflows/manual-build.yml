@@ -1,0 +1,314 @@
+name: Build REST packages and SIF
+run-name: Manual ${{ inputs.target }} build by ${{ github.actor }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Build dependencies, REST + SIF, or both
+        type: choice
+        required: true
+        default: rest
+        options:
+          - dependencies
+          - rest
+          - all
+      dependencies_image:
+        description: Existing dependencies image (used only for target=rest)
+        type: string
+        required: true
+        default: ghcr.io/makarov3821/rest_dependencies:latest
+
+# All manual builds share the publication sequence, including different branches.
+concurrency:
+  group: rest-package-publication
+  cancel-in-progress: false
+  queue: max
+
+permissions:
+  contents: read
+
+env:
+  TZ: Asia/Shanghai
+  CI_OUTPUT_DIR: ${{ github.workspace }}/separate_build/trixie-based/ci-output
+  BUILDX_VERSION: v0.38.1
+  BUILDKIT_IMAGE: moby/buildkit:v0.34.1
+  SINGULARITY_VERSION: 4.6.0
+  BUILD_JOBS: '4'
+  DOCKER_BUILD_RECORD_UPLOAD: 'false'
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: read
+      actions: read
+    outputs:
+      version: ${{ steps.plan.outputs.version }}
+      dependencies_tag: ${{ steps.plan.outputs.dependencies_tag }}
+      rest_tag: ${{ steps.plan.outputs.rest_tag }}
+      rust_image: ${{ steps.plan.outputs.rust_image }}
+      runtime_image: ${{ steps.plan.outputs.runtime_image }}
+      dependencies_image: ${{ steps.plan.outputs.dependencies_image }}
+      rest_workspace_revision: ${{ steps.plan.outputs.rest_workspace_revision }}
+      rest_revision: ${{ steps.plan.outputs.rest_revision }}
+      rest_tensors_revision: ${{ steps.plan.outputs.rest_tensors_revision }}
+      rest_libcint_revision: ${{ steps.plan.outputs.rest_libcint_revision }}
+      rest_regression_revision: ${{ steps.plan.outputs.rest_regression_revision }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+        with:
+          version: ${{ env.BUILDX_VERSION }}
+          driver-opts: image=${{ env.BUILDKIT_IMAGE }}
+          cache-binary: false
+      - name: Allocate Shanghai date/version and resolve source/base revisions
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BUILD_TARGET: ${{ inputs.target }}
+          DEPENDENCIES_IMAGE: ${{ inputs.dependencies_image }}
+        run: python3 -B .github/scripts/release.py prepare
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ci-plan
+          path: ${{ env.CI_OUTPUT_DIR }}/plan.json
+          if-no-files-found: error
+          retention-days: 7
+          overwrite: true
+
+  dependencies:
+    if: inputs.target != 'rest'
+    needs: prepare
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      reference: ${{ steps.info.outputs.reference }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ci-plan
+          path: ${{ env.CI_OUTPUT_DIR }}
+      - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+        id: buildx
+        with:
+          version: ${{ env.BUILDX_VERSION }}
+          driver-opts: image=${{ env.BUILDKIT_IMAGE }}
+          cache-binary: false
+          buildkitd-config-inline: |
+            [worker.oci]
+              max-parallelism = 1
+      - name: Refuse to overwrite an existing version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 -B .github/scripts/release.py check-tag --kind dependencies
+      - name: Build fresh dependencies and push its version tag
+        id: build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: separate_build/trixie-based
+          file: separate_build/trixie-based/Dockerfile.dependencies
+          target: dependencies-final
+          platforms: linux/amd64
+          pull: true
+          no-cache: true
+          push: true
+          tags: ${{ needs.prepare.outputs.dependencies_tag }}
+          build-args: |
+            RUST_IMAGE=${{ needs.prepare.outputs.rust_image }}
+            BUILD_JOBS=${{ env.BUILD_JOBS }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ needs.prepare.outputs.version }}
+      - name: Release intermediate build space and verify published metadata
+        id: info
+        env:
+          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
+          BUILD_METADATA: ${{ steps.build.outputs.metadata }}
+          BUILDKIT_NODES: ${{ steps.buildx.outputs.nodes }}
+        run: |
+          docker buildx prune --all --force
+          python3 -B .github/scripts/release.py image-info --kind dependencies
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: ci-dependencies
+          path: ${{ env.CI_OUTPUT_DIR }}/*-info.json
+          if-no-files-found: warn
+          retention-days: 7
+          overwrite: true
+
+  rest:
+    # Explicit status handling allows the dependencies job to be skipped in rest mode.
+    if: >-
+      !cancelled() && needs.prepare.result == 'success' && inputs.target != 'dependencies' &&
+      (inputs.target == 'rest' || needs.dependencies.result == 'success')
+    needs: [prepare, dependencies]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      digest: ${{ steps.info.outputs.digest }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ci-plan
+          path: ${{ env.CI_OUTPUT_DIR }}
+      - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+        id: buildx
+        with:
+          version: ${{ env.BUILDX_VERSION }}
+          driver-opts: image=${{ env.BUILDKIT_IMAGE }}
+          cache-binary: false
+          buildkitd-config-inline: |
+            [worker.oci]
+              max-parallelism = 1
+      - name: Refuse to overwrite an existing version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 -B .github/scripts/release.py check-tag --kind rest
+      - name: Build REST and run root/admin regression without layer caches
+        id: build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: separate_build/trixie-based
+          file: separate_build/trixie-based/Dockerfile.compressed
+          target: rest-final
+          platforms: linux/amd64
+          pull: true
+          no-cache: true
+          push: true
+          tags: ${{ needs.prepare.outputs.rest_tag }}
+          build-args: |
+            DEPENDENCIES_IMAGE=${{ needs.dependencies.outputs.reference || needs.prepare.outputs.dependencies_image }}
+            RUNTIME_IMAGE=${{ needs.prepare.outputs.runtime_image }}
+            BUILD_JOBS=${{ env.BUILD_JOBS }}
+            WORKSPACE_REVISION=${{ needs.prepare.outputs.rest_workspace_revision }}
+            REST_REVISION=${{ needs.prepare.outputs.rest_revision }}
+            TENSORS_REVISION=${{ needs.prepare.outputs.rest_tensors_revision }}
+            LIBCINT_REVISION=${{ needs.prepare.outputs.rest_libcint_revision }}
+            REGRESSION_REVISION=${{ needs.prepare.outputs.rest_regression_revision }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ needs.prepare.outputs.version }}
+      - name: Release intermediate build space and verify sources/tools
+        id: info
+        env:
+          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
+          BUILD_METADATA: ${{ steps.build.outputs.metadata }}
+          BUILDKIT_NODES: ${{ steps.buildx.outputs.nodes }}
+          USED_DEPENDENCIES_IMAGE: ${{ needs.dependencies.outputs.reference || needs.prepare.outputs.dependencies_image }}
+        run: |
+          docker buildx prune --all --force
+          python3 -B .github/scripts/release.py image-info --kind rest
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: ci-rest
+          path: ${{ env.CI_OUTPUT_DIR }}/*-info.json
+          if-no-files-found: warn
+          retention-days: 7
+          overwrite: true
+
+  publish:
+    if: >-
+      !cancelled() && needs.prepare.result == 'success' &&
+      (needs.dependencies.result == 'success' || needs.dependencies.result == 'skipped') &&
+      (needs.rest.result == 'success' || needs.rest.result == 'skipped')
+    needs: [prepare, dependencies, rest]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: ci-*
+          merge-multiple: true
+          path: ${{ env.CI_OUTPUT_DIR }}
+      - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+        with:
+          version: ${{ env.BUILDX_VERSION }}
+          driver-opts: image=${{ env.BUILDKIT_IMAGE }}
+          cache-binary: false
+      - name: Install the official SingularityCE noble package
+        if: inputs.target != 'dependencies'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          package="singularity-ce_${SINGULARITY_VERSION}-noble_amd64.deb"
+          install_dir="$RUNNER_TEMP/rest-singularity"
+          mkdir -p "$install_dir"
+          gh release download "v${SINGULARITY_VERSION}" --repo sylabs/singularity \
+            --pattern "$package" --dir "$install_dir"
+          checksum="$(gh api "repos/sylabs/singularity/releases/tags/v${SINGULARITY_VERSION}" \
+            --jq ".assets[] | select(.name == \"${package}\") | .digest")"
+          [[ "$checksum" =~ ^sha256:[0-9a-f]{64}$ ]]
+          printf '%s  %s\n' "${checksum#sha256:}" "$install_dir/$package" | sha256sum --check -
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends "$install_dir/$package"
+          test "$(singularity version)" = "$SINGULARITY_VERSION"
+      - name: Convert this exact REST image to SIF and run its smoke calculation
+        if: inputs.target != 'dependencies'
+        env:
+          REST_IMAGE: ${{ needs.prepare.outputs.rest_tag }}
+          REST_DIGEST: ${{ needs.rest.outputs.digest }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          repository="${REST_IMAGE%:*}"
+          docker pull --platform linux/amd64 "$repository@$REST_DIGEST"
+          docker tag "$repository@$REST_DIGEST" "rest-ci:$VERSION"
+          singularity build "$CI_OUTPUT_DIR/rest_$VERSION.sif" "docker-daemon:rest-ci:$VERSION"
+          python3 -B .github/scripts/release.py smoke-sif --sif "$CI_OUTPUT_DIR/rest_$VERSION.sif"
+      - name: Publish SIF Release and promote validated images to latest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 -B .github/scripts/release.py publish
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: ci-publish
+          path: |
+            ${{ env.CI_OUTPUT_DIR }}/*.json
+            ${{ env.CI_OUTPUT_DIR }}/SHA256SUMS
+            ${{ env.CI_OUTPUT_DIR }}/sif-smoke/*.log
+          if-no-files-found: warn
+          retention-days: 7
+          overwrite: true

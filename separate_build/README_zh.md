@@ -12,7 +12,11 @@
 * 最终镜像中**仅**包含 REST 的二进制文件以及必不可少的库。这将为普通用户节省磁盘空间，但**如果你是开发者，请勿使用这种方式进行构建！**
 * 生成的镜像中添加了默认的运行命令。如果使用 Docker，这会缩短运行命令；如果使用 Singularity，其使用体验将类似于直接运行二进制文件，我们将在下文详细介绍。**但是**，<font color="red">引入默认入口点（entrypoint）可能会**破坏** abini 原有的运行命令。</font>因此，我们建议运行时使用下方提供的命令，如果你仍想使用abini中的方法，则要提前测试是否可行。
 
-接下来我们将向你展示如何构建和使用这样的一个精简镜像。你也可以参考该仓库的 README.md 以获取更多细节。
+自2026-10-26开始，separate_build的基础镜像将从ubuntu:jammy更改为debian:trixie-slim（dependencies的实际镜像为rust:slim-trixie，不过也是debian:trixie-slim的基底）。这一方面会在满足目前组件的版本要求之上，给未来REST的新组件提供更加新的系统环境支持，另一方面可以进一步压缩dependencies和成品rest的镜像体积。目前本目录的默认Dockerfile链接到trixie-based，你也可以在jammy-based里面找到老的版本。
+
+对应项目从2026-10-26的更新开始也将提供直接的镜像产物。尽管REST项目目前在GITEE仓库活跃开发，但是GITEE本身不提供免费的CI/CD，因而现在dependencies和rest的镜像，以及singularity的镜像仅在Github仓库的package和release中提供（[rest_dependencies](https://github.com/Makarov3821/rest_docker/pkgs/container/rest_dependencies)，[rest(docker)](https://github.com/Makarov3821/rest_docker/pkgs/container/rest)，以及[rest(sif)](https://github.com/Makarov3821/rest_docker/releases)）。GitHub Actions运行于 Ubuntu 24.04（linux/amd64），使用 Docker Buildx 0.38.1、BuildKit 0.34.1 构建 Docker 镜像，并使用 SingularityCE 4.6.0 转换生成 SIF 文件。镜像的更新时间不定，大概是dependencies半年一次，rest每个月或者重大功能更新一次。
+
+当然，你也可以选择自己重头构建以获得最终的镜像产品，接下来我们将向你展示如何构建和使用这样的一个精简镜像。你也可以参考上级目录的 README.md 以获取更多细节。
 
 ## 构建镜像
 
@@ -26,30 +30,29 @@ docker build -t rest_dependencies:latest --no-cache -f Dockerfile.dependencies -
 
 将生成镜像 `rest_dependencies:latest`，它是后续步骤的基础。当依赖项没有变化时，该镜像无需重新构建。
 
-此外，你也可以通过以下命令直接拉取预构建的依赖镜像：`docker pull ghcr.io/makarov3821/rest_dependencies:260524`
+此外，你也可以通过以下命令直接拉取预构建的依赖镜像：`docker pull ghcr.io/makarov3821/rest_dependencies:latest`
 
 ### 构建压缩版 REST 镜像
 
 同样在此文件夹下运行：
 
 ```sh
-docker build -t [name]:<tag> --no-cache -f Dockerfile.compressed --target rest-final .
+docker build -t rest:<tag> --no-cache -f Dockerfile.compressed --build-arg DEPENDENCIES_IMAGE=rest_dependencies:latest --target rest-final .
 ```
 
-例如，你可以通过以下命令构建一个 2025 年 10 月 25 日的版本：
+例如在 2025 年 10 月 25 日构建，就可以将tag命名为251025：
 
 ```sh
-docker build -t rest_251025:latest --no-cache -f Dockerfile.compressed --target rest-final .
+docker build -t rest:251025 --no-cache -f Dockerfile.compressed --build-arg DEPENDENCIES_IMAGE=rest_dependencies:latest --target rest-final .
 ```
 
-你也可以基于预构建的依赖项来构建压缩版镜像。将 `Dockerfile.compressed` 顶部的几行修改为：
+你也可以基于预构建的依赖项来构建压缩版镜像。只须更换`DEPENDENCIES_IMAGE`为ghcr的镜像：
 
 ```
-# Copy built dependencies from the previous stage
-#FROM rest_dependencies:latest AS rest
-# Or use this line to download a precompiled image
-FROM ghcr.io/makarov3821/rest_dependencies:260524 AS rest
+docker build -t rest:<tag> --no-cache -f Dockerfile.compressed --build-arg DEPENDENCIES_IMAGE=ghcr.io/makarov3821/rest_dependencies:latest --target rest-final .
 ```
+
+如果你对依赖有特定要求也可以更改dependencies的tag，这里不再赘述。
 
 ### （可选）制作 Singularity 镜像
 
@@ -97,17 +100,19 @@ docker run --rm -v /your/ctrl.in/path:/data rest:<tag> -i H2.rjf > rest.log 2>&1
 由于 sif 镜像本身配置了默认命令，因此在有singularity环境的机器上直接运行 `rest.sif` 镜像将获得类似于运行二进制文件的体验：
 
 ```sh
-rest.sif > rest.log 2>&1
+#保证这个镜像可执行，其次有singularity的环境
+chmod +x rest.sif
+./rest.sif > rest.log 2>&1
 ```
 
 你依然可以指定输入文件：
 
 ```sh
-rest.sif -i H2.rjf > rest.log 2>&1
+./rest.sif -i H2.rjf > rest.log 2>&1
 ```
 
 或者使用 MPI 方式运行：
 
 ```sh
-mpirun -np 4 rest.sif > rest.log 2>&1
+mpirun -np 4 ./rest.sif > rest.log 2>&1
 ```

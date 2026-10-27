@@ -2,12 +2,16 @@
 
 #Define the build argument
 ARG CHINA=False
+ARG RUST_IMAGE=rust:slim-trixie
 
 # 1. Define the base image
-FROM rust:slim-trixie AS base
+FROM ${RUST_IMAGE} AS base
 
 # Define the build argument for conditional logic
 ARG CHINA
+ARG BUILD_JOBS=4
+ENV CMAKE_BUILD_PARALLEL_LEVEL=${BUILD_JOBS}
+ENV CARGO_BUILD_JOBS=${BUILD_JOBS}
 
 # Use shell logic to set the ENV variable based on the build argument
 RUN if [ "$CHINA" = "True" ]; then \
@@ -172,7 +176,7 @@ export url_MOKIT=https://gitlab.com/jxzou/MOKIT.git \n" \
 RUN . /tmp/bashrc \
     && git clone --depth=1 ${url_blas} -b v0.3.28 OpenBLAS \
     && cd OpenBLAS \
-    && make DYNAMIC_ARCH=1 USE_OPENMP=1 NUM_THREADS=256 \
+    && make -j "$BUILD_JOBS" DYNAMIC_ARCH=1 USE_OPENMP=1 NUM_THREADS=256 \
     && cp -d libopenblas*.so* $REST_EXT_DIR/
 
 # Build and install libcint library
@@ -181,7 +185,7 @@ RUN . /tmp/bashrc \
     && cd libcint \
     && mkdir build && cd build \
     && cmake -DWITH_RANGE_COULOMB=1 .. \
-    && make -j \
+    && make -j "$BUILD_JOBS" \
     && cp -d libcint.so* $REST_EXT_DIR/
 
 # Build and install libxc library
@@ -190,7 +194,7 @@ RUN . /tmp/bashrc \
     && cd libxc \
     && autoreconf -i \
     && ./configure --prefix=$(pwd) --enable-shared \
-    && make -j && make install \
+    && make -j "$BUILD_JOBS" && make install \
     #&& cp lib/libxc.a  $REST_EXT_DIR/ \
     && cp -d lib/libxc.so* $REST_EXT_DIR/ 
 
@@ -200,7 +204,7 @@ RUN . /tmp/bashrc \
     && git clone --depth=1 ${url_hdf5} -b hdf5_1.14.5 hdf5_src \
     && cd hdf5_src \
     && ./configure --prefix=/opt/hdf5 \
-    && make -j && make -j install \
+    && make -j "$BUILD_JOBS" && make -j "$BUILD_JOBS" install \
     && cd /opt/hdf5 \
     && cp -d lib/libhdf5*.so* $REST_EXT_DIR/ \
     && cp include/* $REST_EXT_INC/
@@ -218,7 +222,7 @@ RUN . /tmp/bashrc \
     && git clone --depth=1 ${url_ninja} -b v1.12.1 ninja \
     && cd ninja \
     && cmake -B build-cmake \
-    && cmake --build build-cmake -j \
+    && cmake --build build-cmake --parallel "$CMAKE_BUILD_PARALLEL_LEVEL" \
     && mv build-cmake/ninja /usr/local/bin/ 
 
 # Install dftd3 (Dispersion Correction)
@@ -230,7 +234,7 @@ RUN . /tmp/bashrc \
     && git clone ${url_drive} build/_deps/test-drive-src \
     && cd build/_deps/test-drive-src \
     && cmake -B ../test-drive-subbuild -G Ninja \
-    && cmake --build ../test-drive-subbuild -j
+    && cmake --build ../test-drive-subbuild --parallel "$CMAKE_BUILD_PARALLEL_LEVEL"
 
 RUN . /tmp/bashrc \
     && cd simple-dftd3 \
@@ -238,7 +242,7 @@ RUN . /tmp/bashrc \
     && find . -type f -exec sed -i "s|https://github.com/grimme-lab/mstore|${url_mstore}|g" {} + \
     && find . -type f -exec sed -i "s|https://github.com/toml-f/toml-f|${url_toml}|g" {} + \
     && cmake -B build -G Ninja -DBUILD_SHARED_LIBS=1 \
-    && cmake --build build -j \
+    && cmake --build build --parallel "$CMAKE_BUILD_PARALLEL_LEVEL" \
     && cp -d build/libs-dftd3.so.* $REST_EXT_DIR/ \
     && cd $REST_EXT_DIR && ln -sf libs-dftd3.so.1 libs-dftd3.so \
     && mkdir -p $REST_EXT_INC/dftd3 \
@@ -336,6 +340,25 @@ RUN set -eu; \
     done; \
     du -sh "$REST_EXT_DIR"
 
+# Keep source revisions and actual compiler versions with the published SDK.
+RUN python3 - <<'PY'
+import json
+from pathlib import Path
+import subprocess
+
+def output(*command):
+    return subprocess.check_output(command, text=True).strip()
+
+sources = {name: output("git", "-C", "/opt/" + name, "rev-parse", "HEAD")
+           for name in ("OpenBLAS", "libcint", "libxc", "hdf5_src", "MOKIT", "ninja", "simple-dftd3", "dftd4")}
+tools = {name: output(name, "--version").splitlines()[0]
+         for name in ("rustc", "cargo", "gcc", "g++", "gfortran", "cmake", "python3", "mpirun")}
+Path("/opt/dependencies-build-info.json").write_text(json.dumps({
+    "sources": sources, "tools": tools,
+    "tblis": json.loads(Path("/opt/tblis-build-info.json").read_text()),
+}, indent=2) + "\n")
+PY
+
 # Remove intermediate
 RUN rm -rf /opt/OpenBLAS /opt/libcint /opt/libxc /opt/hdf5_src \
            /opt/MOKIT /opt/ninja /opt/simple-dftd3 /opt/dftd4 
@@ -349,3 +372,5 @@ FROM base AS dependencies-final
 COPY --from=dependencies $REST_EXT_DIR/ $REST_EXT_DIR/
 COPY --from=dependencies $REST_EXT_INC/ $REST_EXT_INC/
 COPY --from=dependencies /opt/tblis-build-info.json /opt/tblis-build-info.json
+
+COPY --from=dependencies /opt/dependencies-build-info.json /opt/dependencies-build-info.json

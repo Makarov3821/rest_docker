@@ -1,0 +1,27 @@
+# H2O RHF/def2-SVP single point. Geometry and reference energy originate from
+# rest_regression dfbde0ada5be4ee72c8377d93ac2ba40c312914a,
+# bench_pool/analdrv/H2O_RHF_multipole_hess (derivative tasks omitted).
+[ctrl]
+print_level = 2
+num_threads = 2
+xc = "hf"
+basis_path = "def2-svp"
+auxbas_path = "def2-universal-jkfit"
+eri_type = "ri-v"
+charge = 0.0
+spin = 1.0
+spin_polarization = false
+mixer = "diis"
+num_max_diis = 8
+start_diis_cycle = 3
+mix_param = 0.8
+max_scf_cycle = 100
+
+[geom]
+name = "H2O"
+unit = "Angstrom"
+position = """
+O   0.00000000   0.00000000   0.11537521
+H   0.75036929   0.00000000  -0.45898737
+H  -0.75036929   0.00000000  -0.45898737
+"""

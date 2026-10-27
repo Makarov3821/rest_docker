@@ -2,9 +2,17 @@
 
 ARG DEPENDENCIES_IMAGE=rest_dependencies:trixie-slim
 ARG CHINA=False
+ARG RUNTIME_IMAGE=debian:trixie-slim
 
 FROM ${DEPENDENCIES_IMAGE} AS rest
 ARG CHINA
+ARG BUILD_JOBS=4
+ARG WORKSPACE_REVISION
+ARG REST_REVISION
+ARG TENSORS_REVISION
+ARG LIBCINT_REVISION
+ARG REGRESSION_REVISION
+ENV CARGO_BUILD_JOBS=${BUILD_JOBS}
 
 ENV REST_EXT_DIR=/opt/dependency/lib
 ENV REST_EXT_INC=/opt/dependency/include
@@ -19,12 +27,28 @@ ENV REST_XC_DIR=/opt/dependency
 ENV PYO3_PYTHON=/usr/bin/python3
 
 WORKDIR /opt
-RUN git clone https://gitee.com/restgroup/rest_workspace.git
+RUN git clone https://gitee.com/restgroup/rest_workspace.git \
+    && if [ -n "$WORKSPACE_REVISION" ]; then \
+        git -C rest_workspace fetch --depth=1 origin "$WORKSPACE_REVISION" \
+        && git -C rest_workspace checkout --detach FETCH_HEAD; \
+    fi
 WORKDIR /opt/rest_workspace
 RUN git clone https://gitee.com/restgroup/rest.git rest \
     && git clone https://gitee.com/restgroup/rest_tensors.git rest_tensors \
     && git clone https://gitee.com/restgroup/rest_libcint.git rest_libcint \
     && git clone https://gitee.com/restgroup/rest_regression.git rest_regression \
+    && for component in rest rest_tensors rest_libcint rest_regression; do \
+        case "$component" in \
+            rest) revision="$REST_REVISION" ;; \
+            rest_tensors) revision="$TENSORS_REVISION" ;; \
+            rest_libcint) revision="$LIBCINT_REVISION" ;; \
+            rest_regression) revision="$REGRESSION_REVISION" ;; \
+        esac; \
+        if [ -n "$revision" ]; then \
+            git -C "$component" fetch --depth=1 origin "$revision" \
+            && git -C "$component" checkout --detach FETCH_HEAD || exit 1; \
+        fi; \
+    done \
     && ./Config -r gitee -f "$FC" -e
 
 # Pin the four Python entry packages to the versions used by this build.
@@ -120,8 +144,28 @@ if [ "$regression_status" -ne 0 ] \
 fi
 SH
 
+# Record the exact source and tool versions used, including the reused SDK.
+RUN python3 - <<'PY'
+import json
+from pathlib import Path
+import subprocess
+
+home = Path("/opt/rest_workspace")
+sources = {name: subprocess.check_output(["git", "-C", str(path), "rev-parse", "HEAD"], text=True).strip()
+           for name, path in [("rest_workspace", home), *[(name, home / name) for name in
+               ("rest", "rest_tensors", "rest_libcint", "rest_regression")]]}
+tools = {name: subprocess.check_output([name, "--version"], text=True).splitlines()[0]
+         for name in ("rustc", "cargo", "gcc", "gfortran", "cmake", "python3")}
+sdk = Path("/opt/dependencies-build-info.json")
+Path("/opt/rest-build-info.json").write_text(json.dumps({
+    "sources": sources, "tools": tools,
+    "sdk": json.loads(sdk.read_text()) if sdk.exists() else None,
+    "regression": {"root": "passed", "admin": "verified by final build stage"},
+}, indent=2) + "\n")
+PY
+
 # A clean runtime: no Rust toolchain, compilers, development packages or sources.
-FROM debian:trixie-slim AS rest-final
+FROM ${RUNTIME_IMAGE} AS rest-final
 ARG CHINA
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -167,6 +211,7 @@ COPY --from=rest /opt/rest_workspace/target/release/rest /opt/rest
 COPY --from=rest /opt/rest_workspace/rest/basis-set-pool /opt/basis-set-pool
 COPY --from=rest /opt/runtime-wheels/requirements.txt /opt/python-runtime-requirements.txt
 COPY --from=rest /opt/native-runtime-requirements.json /opt/native-runtime-requirements.json
+COPY --from=rest /opt/rest-build-info.json /opt/rest-build-info.json
 
 RUN --mount=type=bind,from=rest,source=/opt/runtime-wheels,target=/wheels \
     if [ "$CHINA" = "True" ]; then \
