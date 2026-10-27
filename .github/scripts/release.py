@@ -1,5 +1,6 @@
 """Helpers for the manual GHCR / SingularityCE release workflow.
 
+Each image job promotes its validated image before downstream jobs start.
 Only the workflow's publish job calls publish(). Tests use injected API/CLI fakes.
 """
 
@@ -279,6 +280,26 @@ def promote(reference):
         raise ValueError("latest does not match the validated version digest")
 
 
+def promote_image(kind):
+    plan = load_plan()
+    if plan["target"] not in {kind, "all"}:
+        raise ValueError("Image kind is not part of this build")
+    path = output_dir() / (kind + "-info.json")
+    info = json.loads(path.read_text())
+    tag = plan[kind + "_tag"]
+    if (info["tag"] != tag or not DIGEST.fullmatch(info["digest"])
+            or info["reference"] != image_repository(tag) + "@" + info["digest"]):
+        raise ValueError("Image validation record differs from the build plan")
+    if kind == "rest" and info["container"]["regression"] != {"root": "passed", "admin": "passed"}:
+        raise ValueError("Both regression runs must pass before updating latest")
+    if image_digest(tag) != info["digest"]:
+        raise ValueError("Version tag changed after image verification")
+    promote(info["reference"])
+    info["latest"] = {"tag": image_repository(tag) + ":latest", "digest": info["digest"]}
+    write_json(path, info)
+    print(f"Verified {info['latest']['tag']} -> {info['digest']}")
+
+
 def publish():
     plan = load_plan()
     directory = output_dir()
@@ -290,6 +311,9 @@ def publish():
     expected = {"dependencies", "rest"} if plan["target"] == "all" else {plan["target"]}
     if set(built) != expected:
         raise ValueError("Missing or unexpected image validation records")
+    for info in built.values():
+        if info.get("latest") != {"tag": image_repository(info["tag"]) + ":latest", "digest": info["digest"]}:
+            raise ValueError("Image latest must be updated and verified in its build job")
     if "rest" in built:
         if built["rest"]["container"]["regression"] != {"root": "passed", "admin": "passed"}:
             raise ValueError("Both regression runs must pass before publishing")
@@ -318,12 +342,8 @@ def publish():
                         "--repo", repo, "--clobber"], check=True)
         api.request(f"/repos/{repo}/releases/{release['id']}", method="PATCH",
                     data={"draft": False, "make_latest": "true"})
-    # No latest tag is touched until every requested image / SIF has passed.
-    # These registry/API operations are not transactional: failures remain visible
-    # and a subsequent manual build receives a fresh version rather than overwriting.
-    for kind in ("dependencies", "rest"):
-        if kind in built:
-            promote(built[kind]["reference"])
+    # Image jobs already updated latest. A failed/retried SIF publication must not
+    # change those aliases or roll them back after a newer image build.
     summary = os.environ.get("GITHUB_STEP_SUMMARY")
     if summary:
         with Path(summary).open("a") as file:
@@ -336,16 +356,16 @@ def publish():
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("prepare", "check-tag", "image-info", "smoke-sif", "publish"))
+    parser.add_argument("command", choices=("prepare", "check-tag", "image-info", "promote-image", "smoke-sif", "publish"))
     parser.add_argument("--kind", choices=("dependencies", "rest"))
     parser.add_argument("--sif")
     args = parser.parse_args()
     if args.command == "prepare":
         prepare()
-    elif args.command in {"image-info", "check-tag"}:
+    elif args.command in {"image-info", "check-tag", "promote-image"}:
         if not args.kind:
             parser.error(args.command + " requires --kind")
-        (image_info if args.command == "image-info" else check_tag)(args.kind)
+        {"image-info": image_info, "check-tag": check_tag, "promote-image": promote_image}[args.command](args.kind)
     elif args.command == "smoke-sif":
         if not args.sif:
             parser.error("smoke-sif requires --sif")

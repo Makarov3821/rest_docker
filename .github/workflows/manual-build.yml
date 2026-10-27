@@ -150,6 +150,8 @@ jobs:
         run: |
           docker buildx prune --all --force
           python3 -B .github/scripts/release.py image-info --kind dependencies
+      - name: Update and verify dependencies latest before the next stage
+        run: python3 -B .github/scripts/release.py promote-image --kind dependencies
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
@@ -231,6 +233,8 @@ jobs:
         run: |
           docker buildx prune --all --force
           python3 -B .github/scripts/release.py image-info --kind rest
+      - name: Update and verify REST latest before SIF publication
+        run: python3 -B .github/scripts/release.py promote-image --kind rest
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
@@ -250,7 +254,7 @@ jobs:
     timeout-minutes: 90
     permissions:
       contents: write
-      packages: write
+      packages: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -306,7 +310,7 @@ jobs:
           docker tag "$repository@$REST_DIGEST" "rest-ci:$VERSION"
           singularity build "$CI_OUTPUT_DIR/rest_$VERSION.sif" "docker-daemon:rest-ci:$VERSION"
           python3 -B .github/scripts/release.py smoke-sif --sif "$CI_OUTPUT_DIR/rest_$VERSION.sif"
-      - name: Publish SIF Release and promote validated images to latest
+      - name: Publish verified SIF Release and summarize completed images
         env:
           GH_TOKEN: ${{ github.token }}
         run: python3 -B .github/scripts/release.py publish
